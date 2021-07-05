@@ -11,6 +11,8 @@ import asyncio
 import sys
 import threading
 
+from PySide2.QtCore import QSize
+from PySide2.QtGui import QIcon
 from bleak import BleakScanner
 
 from PySide2.QtWidgets import QApplication
@@ -34,7 +36,15 @@ if __name__ == "__main__":
     ble_scanner = ble.BLEScanner(loop)
 
     widget = gui.BLEWidget(ble_scanner)
-    widget.resize(800, 600)
+    widget.setWindowTitle("BBQ Manager")
+
+    icon = QIcon()
+    for size in [16, 24, 32, 48, 64, 96, 128, 256, 512]:
+        icon.addFile(f'icons/{size}.png', QSize(size, size))
+
+    widget.setWindowIcon(icon)
+
+    widget.resize(1000, 600)
     widget.show()
 
     ble_scanner.scan_started.connect(lambda: widget.update_scan_button(True))
@@ -48,8 +58,14 @@ if __name__ == "__main__":
 
     app.exec_()
 
-    print("Finishing")
+    print("Stopping current scan")
+    asyncio.run_coroutine_threadsafe(ble_scanner.stop_ble_scan(), loop).result()
 
-    asyncio.run_coroutine_threadsafe(ble_scanner.stop_ble_scan(), loop)
-    asyncio.run_coroutine_threadsafe(ble_scanner.disconnect_devices(), loop)
-    loop.call_soon_threadsafe(loop.stop)
+    ble_scanner.exit()
+    print("Disconnecting devices")
+    asyncio.run_coroutine_threadsafe(ble_scanner.disconnect_devices(), loop).result()
+    print("Closing event loop")
+    loop.stop()
+    print("Goodbye")
+    sys.exit(0)
+
