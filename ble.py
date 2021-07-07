@@ -43,6 +43,8 @@ class Device(QThread):
     list_widget: QListWidgetItem = None
 
     dtime: datetime = datetime.min
+    dtime_changed: bool = True
+
     alarm_time: datetime = datetime.min
 
     battery: int = 0
@@ -104,6 +106,7 @@ class Device(QThread):
                 self.connected = True
         elif command == "time":
             self.dtime = datetime.strptime(split[1], '%H,%M,%S,%d,%m,%y')
+            self.dtime_changed = True
         elif command == "battery":
             self.battery = int(int(split[1]) / 420.0 * 100)
         elif command == "firmware":
@@ -147,6 +150,7 @@ class Device(QThread):
 
     def handle_disconnect(self, _: BleakClient):
         self.running = False
+        self.scanner.blacklisted_ids.append(self.ble.address)
         print("Device was disconnected, goodbye.")
 
         self.exit()
@@ -214,6 +218,7 @@ class Device(QThread):
 
 class BLEScanner(QThread):
     devices = {}
+    blacklisted_ids = []
 
     scanner: BleakScanner = None
     scanning_task: asyncio.Task = None
@@ -221,6 +226,9 @@ class BLEScanner(QThread):
 
     scan_started = Signal()
     scan_finished = Signal()
+
+    disconnect_started = Signal()
+    disconnect_finished = Signal()
 
     device_connected = Signal(Device)
     device_disconnected = Signal(Device)
@@ -235,8 +243,11 @@ class BLEScanner(QThread):
         self.loop.run_forever()
 
     async def device_found_callback(self, device: BLEDevice, adv: AdvertisementData):
+        if device.address in self.blacklisted_ids:
+            return
+
         if device.address in self.devices:
-            if device.name:
+            if not self.devices[device.address].running and device.name:
                 self.devices[device.address].name = device.name
                 await self.devices[device.address].connect_device()
 
@@ -254,9 +265,11 @@ class BLEScanner(QThread):
         if self.running:
             return
 
-        await self.disconnect_devices()
+        # await self.disconnect_devices()
 
         print("Scanning for devices")
+        self.blacklisted_ids.clear()
+
         self.running = True
         self.scan_started.emit()
 
@@ -272,6 +285,11 @@ class BLEScanner(QThread):
         print("Finished scanning")
         self.running = False
         self.scan_finished.emit()
+
+    async def disconnect_ble_devices(self):
+        self.disconnect_started.emit()
+        await self.disconnect_devices()
+        self.disconnect_finished.emit()
 
     async def stop_ble_scan(self):
         if self.scanner:

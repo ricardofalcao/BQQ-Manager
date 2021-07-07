@@ -49,6 +49,8 @@ if __name__ == "__main__":
 
     ble_scanner.scan_started.connect(lambda: widget.update_scan_button(True))
     ble_scanner.scan_finished.connect(lambda: widget.update_scan_button(False))
+    ble_scanner.disconnect_started.connect(lambda: widget.update_disconnect_all_button(True))
+    ble_scanner.disconnect_finished.connect(lambda: widget.update_disconnect_all_button(False))
     ble_scanner.device_connected.connect(widget.add_device)
     ble_scanner.device_disconnected.connect(widget.remove_device)
 

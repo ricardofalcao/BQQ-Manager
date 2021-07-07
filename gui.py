@@ -2,7 +2,7 @@ import asyncio
 from datetime import datetime
 from time import strftime, gmtime, struct_time
 
-from PySide2.QtGui import QIntValidator
+from PySide2.QtGui import QIntValidator, QColor, QPalette
 from PySide2.QtWidgets import (QPushButton,
                                QVBoxLayout, QWidget, QHBoxLayout, QListWidget, QSplitter, QFrame, QGridLayout,
                                QGroupBox, QLabel, QSpacerItem, QSizePolicy, QProgressBar, QTimeEdit, QLineEdit,
@@ -20,7 +20,11 @@ class BLEWidget(QWidget):
     empty_device: QFrame
     content_frame: QFrame
 
+    time_sync_button: QPushButton
     scan_button: QPushButton
+    disconnect_all_button: QPushButton
+
+    disconnect_button: QPushButton
 
     time_value: QLabel
 
@@ -32,8 +36,13 @@ class BLEWidget(QWidget):
     id_edit: QLineEdit
     frame_edit: QLineEdit
 
-    imu_acceleration: QLabel
-    imu_gyro: QLabel
+    imu_acceleration_x: QLabel
+    imu_acceleration_y: QLabel
+    imu_acceleration_z: QLabel
+
+    imu_gyro_x: QLabel
+    imu_gyro_y: QLabel
+    imu_gyro_z: QLabel
 
     firmware_value: QLabel
 
@@ -81,7 +90,11 @@ class BLEWidget(QWidget):
 
         self.set_battery(device.battery)
         self.set_device_firmware(device.firmware)
-        self.set_device_time(device.dtime)
+
+        if device.dtime_changed:
+            device.dtime_changed = False
+            self.set_device_time(device.dtime)
+
         self.set_alarm_time(device.alarm_time)
         self.set_imu(device.imu_acceleration, device.imu_gyro)
 
@@ -114,6 +127,18 @@ class BLEWidget(QWidget):
         self.battery_value.setValue(value)
 
     def set_device_time(self, time: datetime):
+        now = datetime.now()
+
+        palette = self.time_sync_button.palette()
+        if abs((now - time).total_seconds()) > 5:
+            palette.setColor(QPalette.Button, QColor(Qt.red))
+        else:
+            palette.setColor(QPalette.Button, QColor(Qt.green))
+
+        self.time_sync_button.setAutoFillBackground(True)
+        self.time_sync_button.setPalette(palette)
+        self.time_sync_button.update()
+
         if time == datetime.min:
             self.time_value.setText("unknown")
         else:
@@ -135,8 +160,13 @@ class BLEWidget(QWidget):
         self.frame_edit.setText(str(settings[1]))
 
     def set_imu(self, imu_acceleration, imu_gyro):
-        self.imu_acceleration.setText(f"X: { imu_acceleration[0] } | Y: { imu_acceleration[1] } | Z: { imu_acceleration[2] }")
-        self.imu_gyro.setText(f"X: { imu_gyro[0] } | Y: { imu_gyro[1] } | Z: { imu_gyro[2] }")
+        self.imu_acceleration_x.setText(f"X: { imu_acceleration[0] }")
+        self.imu_acceleration_y.setText(f"Y: { imu_acceleration[1] }")
+        self.imu_acceleration_z.setText(f"Z: { imu_acceleration[2] }")
+
+        self.imu_gyro_x.setText(f"X: { imu_gyro[0] }")
+        self.imu_gyro_y.setText(f"Y: { imu_gyro[1] }")
+        self.imu_gyro_z.setText(f"Z: { imu_gyro[2] }")
 
     #
     #
@@ -180,11 +210,19 @@ class BLEWidget(QWidget):
         else:
             self.scan_button.setText("Scanning devices...")
 
+    def update_disconnect_all_button(self, value: bool):
+        self.disconnect_all_button.setEnabled(not value)
+
+        if not value:
+            self.disconnect_all_button.setText("Disconnect all devices")
+        else:
+            self.disconnect_all_button.setText("Disconnecting devices")
+
     def create_empty_device(self):
         self.empty_device = QFrame()
         layout = QVBoxLayout()
 
-        label = QLabel("Please select a device from the device list")
+        label = QLabel("Please select a device from the device list\nIf the device is not found, please wait a few seconds before scanning again")
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
 
@@ -206,6 +244,12 @@ class BLEWidget(QWidget):
 
         layout.addWidget(self.scan_button)
 
+        self.disconnect_all_button = QPushButton("")
+        self.disconnect_all_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.ble_scanner.disconnect_ble_devices(), asyncio.get_event_loop()))
+        self.update_disconnect_all_button(False)
+
+        layout.addWidget(self.disconnect_all_button)
+
         self.device_list_frame.setLayout(layout)
 
     def create_content_frame(self):
@@ -223,10 +267,10 @@ class BLEWidget(QWidget):
             self.time_value.setAlignment(Qt.AlignRight)
             layout_box.addWidget(self.time_value, 0, 1)
 
-            sync_button = QPushButton("Sync")
-            sync_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.sync_device_time(datetime.now()), asyncio.get_event_loop()))
+            self.time_sync_button = QPushButton("Sync")
+            self.time_sync_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.sync_device_time(datetime.now()), asyncio.get_event_loop()))
 
-            layout_box.addWidget(sync_button, 1, 0, 1, 2)
+            layout_box.addWidget(self.time_sync_button, 1, 0, 1, 2)
 
             layout_box.addItem(QSpacerItem(0, 1, QSizePolicy.Fixed, QSizePolicy.Expanding), 3, 0)
 
@@ -283,25 +327,29 @@ class BLEWidget(QWidget):
             imu_box = QGroupBox("IMU")
             layout_box = QVBoxLayout()
 
-            layout_box.addWidget(QLabel("IMU:"))
+            grid_box = QGridLayout()
+            grid_box.setHorizontalSpacing(10)
+            grid_box.addWidget(QLabel("Acceleration:"), 0, 0, 1, 1)
 
-            accel_box = QHBoxLayout()
-            accel_box.addWidget(QLabel("Acceleration:"))
+            self.imu_acceleration_x = QLabel("X: 0.0")
+            self.imu_acceleration_y = QLabel("Y: 0.0")
+            self.imu_acceleration_z = QLabel("Z: 0.0")
+            grid_box.addWidget(self.imu_acceleration_x, 0, 2)
+            grid_box.addWidget(self.imu_acceleration_y, 0, 3)
+            grid_box.addWidget(self.imu_acceleration_z, 0, 4)
 
-            self.imu_acceleration = QLabel(f"X: 0.0 | Y: 0.0 | Z: 0.0")
-            self.imu_acceleration.setAlignment(Qt.AlignRight)
-            accel_box.addWidget(self.imu_acceleration)
+            # grid_box.addItem(QSpacerItem(1, 0, QSizePolicy.Expanding, QSizePolicy.Fixed), 0, 1, 2, 1)
 
-            layout_box.addItem(accel_box)
+            grid_box.addWidget(QLabel("Gyroscope:"), 1, 0, 1, 2)
 
-            gyro_box = QHBoxLayout()
-            gyro_box.addWidget(QLabel("Gyroscope:"))
+            self.imu_gyro_x = QLabel("X: 0.0")
+            self.imu_gyro_y = QLabel("Y: 0.0")
+            self.imu_gyro_z = QLabel("Z: 0.0")
+            grid_box.addWidget(self.imu_gyro_x, 1, 2)
+            grid_box.addWidget(self.imu_gyro_y, 1, 3)
+            grid_box.addWidget(self.imu_gyro_z, 1, 4)
 
-            self.imu_gyro = QLabel(f"X: 0.0 | Y: 0.0 | Z: 0.0")
-            self.imu_gyro.setAlignment(Qt.AlignRight)
-            gyro_box.addWidget(self.imu_gyro)
-
-            layout_box.addItem(gyro_box)
+            layout_box.addItem(grid_box)
 
             reset_button = QPushButton("Reset")
             reset_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.reset_imu(), asyncio.get_event_loop()))
@@ -309,7 +357,7 @@ class BLEWidget(QWidget):
 
             calib_button = QPushButton("Calibrate")
             calib_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.calibrate_imu(), asyncio.get_event_loop()))
-            layout_box.addWidget(calib_button)
+            # layout_box.addWidget(calib_button)
 
             layout_box.addStretch()
 
@@ -347,7 +395,7 @@ class BLEWidget(QWidget):
             layout_box.addStretch()
 
             settings_box.setLayout(layout_box)
-            layout.addWidget(settings_box, 2, 0)
+            layout.addWidget(settings_box, 2, 0, 2, 1)
 
         settings()
 
@@ -368,5 +416,21 @@ class BLEWidget(QWidget):
             layout.addWidget(firmware_box, 2, 1)
 
         firmware()
+
+        def actions():
+            actions_box = QGroupBox("Actions")
+            layout_box = QVBoxLayout()
+
+            self.disconnect_button = QPushButton("Disconnect")
+            self.disconnect_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.ble_device.disconnect_device(), asyncio.get_event_loop()))
+            layout_box.addWidget(self.disconnect_button)
+            layout_box.addWidget(QPushButton("Download logs"))
+
+            layout_box.addStretch()
+
+            actions_box.setLayout(layout_box)
+            layout.addWidget(actions_box, 3, 1)
+
+        actions()
 
         self.content_frame.setLayout(layout)
