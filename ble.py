@@ -6,7 +6,7 @@ from logging import log
 
 from PySide2 import QtCore
 from PySide2.QtCore import Signal, QObject, QThread
-from PySide2.QtWidgets import QListWidgetItem
+from PySide2.QtWidgets import QListWidgetItem, QLabel
 
 from bleak import BleakScanner, BleakClient, BleakError
 from bleak.backends.device import BLEDevice
@@ -32,15 +32,15 @@ class Device(QThread):
     pass
 
 
-class Device(QThread):
+class Device(QObject):
     name: str
     client: BleakClient
-    connect_task: asyncio.Task = None
 
     updated: Signal = Signal(Device)
     queued_commands = []
 
     list_widget: QListWidgetItem = None
+    list_widget_label: QLabel = None
 
     dtime: datetime = datetime.min
     dtime_changed: bool = True
@@ -56,9 +56,10 @@ class Device(QThread):
     imu_acceleration = (0, 0, 0)
     imu_gyro = (0, 0, 0)
 
-    def __init__(self, scanner: BLEScanner, ble: BLEDevice):
-        QThread.__init__(self, None)
+    def __init__(self, loop, scanner: BLEScanner, ble: BLEDevice):
+        QObject.__init__(self)
 
+        self.loop = loop
         self.scanner = scanner
         self.ble = ble
         self.name = ble.name
@@ -131,6 +132,7 @@ class Device(QThread):
 
     async def handle_rx(self, _: int, data: bytearray):
         command = data.decode()
+        print("RX: " + command)
 
         result = command.find('\n')
 
@@ -153,34 +155,32 @@ class Device(QThread):
         self.scanner.blacklisted_ids.append(self.ble.address)
         print("Device was disconnected, goodbye.")
 
-        self.exit()
-
-        self.scanner.device_disconnected.emit(self)
         if self.ble.address in self.scanner.devices:
+            self.scanner.device_disconnected.emit(self)
             del self.scanner.devices[self.ble.address]
 
-    def _sleep(self, _time: float):
-        time.sleep(_time)
+    async def _sleep(self, _time: float):
+        await asyncio.sleep(_time)
 
         if len(self.queued_commands) > 0:
             for i in range(len(self.queued_commands)):
                 command = self.queued_commands[0]
-                asyncio.run(self._send_cmd(command))
+                await self._send_cmd(command)
                 self.queued_commands.remove(command)
-                time.sleep(_time)
+                await asyncio.sleep(_time)
 
-    def run(self):
+    async def run(self):
         while self.running:
-            asyncio.run(self._send_cmd("gettime"))
-            self._sleep(0.5)
-            asyncio.run(self._send_cmd("battery"))
-            self._sleep(0.5)
-            asyncio.run(self._send_cmd("imudata"))
-            self._sleep(0.5)
-            asyncio.run(self._send_cmd("firmware"))
-            self._sleep(0.5)
-            asyncio.run(self._send_cmd("getsettings"))
-            self._sleep(0.5)
+            await self._send_cmd("gettime")
+            await self._sleep(0.5)
+            await self._send_cmd("battery")
+            await self._sleep(0.5)
+            await self._send_cmd("imudata")
+            await self._sleep(0.5)
+            await self._send_cmd("firmware")
+            await self._sleep(0.5)
+            await self._send_cmd("getsettings")
+            await self._sleep(0.5)
 
     #
     #
@@ -190,26 +190,31 @@ class Device(QThread):
         if self.running:
             return
 
-        self.client = BleakClient(self.ble, disconnected_callback=self.handle_disconnect, loop=asyncio.get_event_loop())
-
         self.running = True
+        self.client = BleakClient(self.ble, disconnected_callback=self.handle_disconnect, loop=asyncio.get_event_loop())
 
         self.updated.emit(self)
 
-        self.connect_task = asyncio.create_task(self.client.connect())
-        await self.connect_task
-
+        await self.client.connect()
         await self.client.start_notify(UART_CHAR_UUID, self.handle_rx)
 
-        self.start()
+        self.run_task = asyncio.run_coroutine_threadsafe(self.run(), asyncio.get_event_loop())
 
     async def disconnect_device(self):
+        if not self.running:
+            return
+
         self.running = False
 
-        if self.connect_task:
-            self.connect_task.cancel()
+        self.scanner.device_disconnecting.emit(self)
 
         await self.client.disconnect()
+
+        if self.ble.address in self.scanner.devices:
+            self.scanner.device_disconnected.emit(self)
+            del self.scanner.devices[self.ble.address]
+
+        self.run_task.cancel()
 
 
 #
@@ -221,7 +226,6 @@ class BLEScanner(QThread):
     blacklisted_ids = []
 
     scanner: BleakScanner = None
-    scanning_task: asyncio.Task = None
     running = False
 
     scan_started = Signal()
@@ -231,6 +235,7 @@ class BLEScanner(QThread):
     disconnect_finished = Signal()
 
     device_connected = Signal(Device)
+    device_disconnecting = Signal(Device)
     device_disconnected = Signal(Device)
 
     def __init__(self, loop):
@@ -242,24 +247,35 @@ class BLEScanner(QThread):
         asyncio.set_event_loop(self.loop)
         self.loop.run_forever()
 
-    async def device_found_callback(self, device: BLEDevice, adv: AdvertisementData):
-        if device.address in self.blacklisted_ids:
-            return
+    def stop(self) -> None:
+        self.loop.stop()
+        if not self.wait(1000):
+            self.terminate()
+            self.wait()
 
+    async def device_found_callback(self, device: BLEDevice, adv: AdvertisementData):
         if device.address in self.devices:
-            if not self.devices[device.address].running and device.name:
-                self.devices[device.address].name = device.name
-                await self.devices[device.address].connect_device()
+            if device.name:
+                ble_device = self.devices[device.address]
+                ble_device.name = device.name
+                ble_device.updated.emit(ble_device)
+
+            #                if not self.devices[device.address].running:
+            #                    await self.devices[device.address].connect_device()
 
             return
 
         if UART_SERVICE_UUID.lower() not in adv.service_uuids:
             return
 
+        if device.address in self.blacklisted_ids:
+            return
+
         print("NEW device " + device.name + " - " + device.address)
 
-        new_device = Device(self, device)
+        new_device = Device(self.loop, self, device)
         self.devices[device.address] = new_device
+        await new_device.connect_device()
 
     async def scan_ble_devices(self):
         if self.running:
@@ -276,11 +292,12 @@ class BLEScanner(QThread):
         self.scanner = BleakScanner(detection_callback=self.device_found_callback)
         await self.scanner.start()
 
-        self.scanning_task = asyncio.create_task(asyncio.sleep(10))
-        await self.scanning_task
+        await asyncio.sleep(10)
 
         await self.scanner.stop()
         self.scanner = None
+
+        await self.disconnect_trash_devices()
 
         print("Finished scanning")
         self.running = False
@@ -296,13 +313,17 @@ class BLEScanner(QThread):
             await self.scanner.stop()
             self.scanner = None
 
-            if self.scanning_task:
-                self.scanning_task.cancel()
+    async def disconnect_trash_devices(self):
+        l = list(self.devices.values())
+
+        for i in range(len(self.devices)):
+            device = l[i]
+            if not device.connected:
+                await device.disconnect_device()
 
     async def disconnect_devices(self):
         l = list(self.devices.values())
 
         for i in range(len(self.devices)):
             device = l[0]
-            print("Disconnect " + device.name)
             await device.disconnect_device()

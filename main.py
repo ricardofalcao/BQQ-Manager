@@ -49,25 +49,27 @@ if __name__ == "__main__":
 
     ble_scanner.scan_started.connect(lambda: widget.update_scan_button(True))
     ble_scanner.scan_finished.connect(lambda: widget.update_scan_button(False))
+
     ble_scanner.disconnect_started.connect(lambda: widget.update_disconnect_all_button(True))
     ble_scanner.disconnect_finished.connect(lambda: widget.update_disconnect_all_button(False))
+
     ble_scanner.device_connected.connect(widget.add_device)
+    ble_scanner.device_disconnecting.connect(lambda: widget.update_disconnect_button(True))
     ble_scanner.device_disconnected.connect(widget.remove_device)
 
-    asyncio.run_coroutine_threadsafe(ble_scanner.scan_ble_devices(), loop)
+    asyncio.run_coroutine_threadsafe(ble_scanner.scan_ble_devices(), ble_scanner.loop)
 
     ble_scanner.start()
 
     app.exec_()
 
     print("Stopping current scan")
-    asyncio.run_coroutine_threadsafe(ble_scanner.stop_ble_scan(), loop).result()
-
-    ble_scanner.exit()
+    asyncio.run_coroutine_threadsafe(ble_scanner.stop_ble_scan(), ble_scanner.loop).result()
     print("Disconnecting devices")
-    asyncio.run_coroutine_threadsafe(ble_scanner.disconnect_devices(), loop).result()
-    print("Closing event loop")
-    loop.stop()
+    asyncio.run_coroutine_threadsafe(ble_scanner.disconnect_devices(), ble_scanner.loop).result()
+
+    ble_scanner.stop()
+
     print("Goodbye")
     sys.exit(0)
 

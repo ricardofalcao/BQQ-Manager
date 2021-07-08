@@ -79,14 +79,18 @@ class BLEWidget(QWidget):
     def add_device(self, device: ble.Device):
         item = QListWidgetItem(self.device_list)
         device.list_widget = item
+        device.list_widget_label = QLabel(device.name)
 
         item.device = device
         self.device_list.addItem(item)
-        self.device_list.setItemWidget(item, QLabel(device.name))
+        self.device_list.setItemWidget(item, device.list_widget_label)
 
     @Slot(ble.Device)
     def update_device(self, device: ble.Device):
         self.ble_device = device
+
+        if device.name:
+            device.list_widget_label.setText(device.name)
 
         self.set_battery(device.battery)
         self.set_device_firmware(device.firmware)
@@ -217,6 +221,14 @@ class BLEWidget(QWidget):
             self.disconnect_all_button.setText("Disconnect all devices")
         else:
             self.disconnect_all_button.setText("Disconnecting devices")
+
+    def update_disconnect_button(self, value: bool):
+        self.disconnect_button.setEnabled(not value)
+
+        if not value:
+            self.disconnect_button.setText("Disconnect")
+        else:
+            self.disconnect_button.setText("Disconnecting")
 
     def create_empty_device(self):
         self.empty_device = QFrame()
