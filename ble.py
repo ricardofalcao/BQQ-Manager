@@ -132,13 +132,18 @@ class Device(QObject):
 
     async def handle_rx(self, _: int, data: bytearray):
         command = data.decode()
-        print("RX: " + command)
+        # print("RX: " + command + " - " + ("".join("{:02x} ".format(x) for x in data)))
 
         result = command.find('\n')
 
         while result != -1:
             self.read_buffer += command[0:result]
-            await self.receive_cmd(self.read_buffer)
+
+            try:
+                await self.receive_cmd(self.read_buffer)
+            except Exception:
+                pass
+
             self.read_buffer = ''
 
             command = command[result:-1]
@@ -170,17 +175,30 @@ class Device(QObject):
                 await asyncio.sleep(_time)
 
     async def run(self):
+        tick = 0
+        tick_duration = 0.5
+
+        await self._sleep(tick_duration)
+        await self._send_cmd("gettime")
+        await self._sleep(tick_duration)
+        await self._send_cmd("getsettings")
+        await self._sleep(tick_duration)
+
         while self.running:
             await self._send_cmd("gettime")
-            await self._sleep(0.5)
-            await self._send_cmd("battery")
-            await self._sleep(0.5)
+            await self._sleep(tick_duration)
             await self._send_cmd("imudata")
-            await self._sleep(0.5)
-            await self._send_cmd("firmware")
-            await self._sleep(0.5)
-            await self._send_cmd("getsettings")
-            await self._sleep(0.5)
+            await self._sleep(tick_duration)
+
+            if tick % 4 == 0:
+                await self._send_cmd("battery")
+                await self._sleep(tick_duration)
+
+            if tick % 10 == 0:
+                await self._send_cmd("firmware")
+                await self._sleep(tick_duration)
+
+            tick = tick + 1
 
     #
     #
@@ -226,7 +244,7 @@ class BLEScanner(QThread):
     blacklisted_ids = []
 
     scanner: BleakScanner = None
-    running = False
+    scanning = False
 
     scan_started = Signal()
     scan_finished = Signal()
@@ -248,10 +266,15 @@ class BLEScanner(QThread):
         self.loop.run_forever()
 
     def stop(self) -> None:
+        print("Stopping loop")
         self.loop.stop()
-        if not self.wait(1000):
+
+        if not self.wait(5000):
+            print("TERMINATE")
             self.terminate()
-            self.wait()
+            print("waitinggg")
+            self.wait(10000)
+        print("byer")
 
     async def device_found_callback(self, device: BLEDevice, adv: AdvertisementData):
         if device.address in self.devices:
@@ -259,9 +282,6 @@ class BLEScanner(QThread):
                 ble_device = self.devices[device.address]
                 ble_device.name = device.name
                 ble_device.updated.emit(ble_device)
-
-            #                if not self.devices[device.address].running:
-            #                    await self.devices[device.address].connect_device()
 
             return
 
@@ -278,7 +298,7 @@ class BLEScanner(QThread):
         await new_device.connect_device()
 
     async def scan_ble_devices(self):
-        if self.running:
+        if self.scanning:
             return
 
         # await self.disconnect_devices()
@@ -286,32 +306,42 @@ class BLEScanner(QThread):
         print("Scanning for devices")
         self.blacklisted_ids.clear()
 
-        self.running = True
+        self.scanning = True
         self.scan_started.emit()
 
         self.scanner = BleakScanner(detection_callback=self.device_found_callback)
         await self.scanner.start()
 
+        print("Waiting...")
         await asyncio.sleep(10)
 
-        await self.scanner.stop()
-        self.scanner = None
+        print("Stopping scanner")
+        await self.stop_ble_scan()
 
+        print("Disposing unconnected devices")
         await self.disconnect_trash_devices()
 
         print("Finished scanning")
-        self.running = False
+        self.scanning = False
         self.scan_finished.emit()
 
-    async def disconnect_ble_devices(self):
-        self.disconnect_started.emit()
-        await self.disconnect_devices()
-        self.disconnect_finished.emit()
+    #
+    #
+    #
 
     async def stop_ble_scan(self):
         if self.scanner:
             await self.scanner.stop()
             self.scanner = None
+
+    #
+    #
+    #
+
+    async def disconnect_ble_devices(self):
+        self.disconnect_started.emit()
+        await self.disconnect_devices()
+        self.disconnect_finished.emit()
 
     async def disconnect_trash_devices(self):
         l = list(self.devices.values())

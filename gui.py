@@ -160,7 +160,10 @@ class BLEWidget(QWidget):
             # self.alarm_edit.setTime(QTime(time.hour, time.minute, time.second))
 
     def set_settings(self, settings):
+        #if not self.id_edit.hasFocus():
         self.id_edit.setText(str(settings[0]))
+
+        #if not self.frame_edit.hasFocus():
         self.frame_edit.setText(str(settings[1]))
 
     def set_imu(self, imu_acceleration, imu_gyro):
@@ -397,11 +400,22 @@ class BLEWidget(QWidget):
             layout_box.addWidget(self.frame_edit)
 
             update_button = QPushButton("Update")
-            update_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.set_device_settings(), asyncio.get_event_loop()))
+
+            def update_button_click():
+                self.id_edit.clearFocus()
+                self.frame_edit.clearFocus()
+                asyncio.run_coroutine_threadsafe(self.set_device_settings(), asyncio.get_event_loop())
+
+            update_button.clicked.connect(update_button_click)
             layout_box.addWidget(update_button)
 
+            def refresh_button_click():
+                self.id_edit.clearFocus()
+                self.frame_edit.clearFocus()
+                asyncio.run_coroutine_threadsafe(self.refresh_device_settings(), asyncio.get_event_loop())
+
             refresh_button = QPushButton("Refresh")
-            refresh_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.refresh_device_settings(), asyncio.get_event_loop()))
+            refresh_button.clicked.connect(refresh_button_click)
             layout_box.addWidget(refresh_button)
 
             layout_box.addStretch()
