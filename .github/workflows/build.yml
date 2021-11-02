@@ -35,6 +35,11 @@ jobs:
     strategy:
       matrix:
         include:
+          - os: ubuntu-latest
+            TARGET: linux
+            CMD_BUILD: pyinstaller --onefile --windowed --icon icons/bsc.ico --name BBQ-Manager --add-data "icons/*:icons" main.py
+            OUT_FILE_NAME: BBQ-Manager
+            ASSET_MIME: application/x-executable
           - os: windows-latest
             TARGET: windows
             CMD_BUILD: pyinstaller --onefile --windowed --icon icons/bsc.ico --name BBQ-Manager --add-data "icons/*;icons" main.py
