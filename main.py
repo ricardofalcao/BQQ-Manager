@@ -29,6 +29,16 @@ import gui
 #
 #
 
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
 
@@ -40,7 +50,7 @@ if __name__ == "__main__":
 
     icon = QIcon()
     for size in [16, 24, 32, 48, 64, 96, 128, 256, 512]:
-        icon.addFile(f'icons/{size}.png', QSize(size, size))
+        icon.addFile(resource_path(f'icons/{size}.png'), QSize(size, size))
 
     widget.setWindowIcon(icon)
 
