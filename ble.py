@@ -109,7 +109,7 @@ class Device(QObject):
             self.dtime = datetime.strptime(split[1], '%H,%M,%S,%d,%m,%y')
             self.dtime_changed = True
         elif command == "battery":
-            self.battery = int(int(split[1]) / 420.0 * 100)
+            self.battery = int(split[1])
         elif command == "firmware":
             self.firmware = split[1]
         elif command == "getsettings":
@@ -226,7 +226,8 @@ class Device(QObject):
 
         self.scanner.device_disconnecting.emit(self)
 
-        await self.client.disconnect()
+        if self.client.is_connected:
+            await self.client.disconnect()
 
         if self.ble.address in self.scanner.devices:
             self.scanner.device_disconnected.emit(self)
@@ -273,7 +274,6 @@ class BLEScanner(QThread):
             print("TERMINATE")
             self.terminate()
             print("waitinggg")
-            self.wait(10000)
         print("byer")
 
     async def device_found_callback(self, device: BLEDevice, adv: AdvertisementData):
@@ -295,7 +295,12 @@ class BLEScanner(QThread):
 
         new_device = Device(self.loop, self, device)
         self.devices[device.address] = new_device
-        await new_device.connect_device()
+
+        try:
+            await new_device.connect_device()
+        except asyncio.exceptions.TimeoutError:
+            print(f"Could not connect to {device.address}")
+            pass
 
     async def scan_ble_devices(self):
         if self.scanning:
@@ -313,7 +318,7 @@ class BLEScanner(QThread):
         await self.scanner.start()
 
         print("Waiting...")
-        await asyncio.sleep(10)
+        await asyncio.sleep(20)
 
         print("Stopping scanner")
         await self.stop_ble_scan()

@@ -1,13 +1,12 @@
 import asyncio
 from datetime import datetime
-from time import strftime, gmtime, struct_time
 
 from PySide2.QtGui import QIntValidator, QColor, QPalette
 from PySide2.QtWidgets import (QPushButton,
                                QVBoxLayout, QWidget, QHBoxLayout, QListWidget, QSplitter, QFrame, QGridLayout,
                                QGroupBox, QLabel, QSpacerItem, QSizePolicy, QProgressBar, QTimeEdit, QLineEdit,
                                QListWidgetItem, QAbstractItemView)
-from PySide2.QtCore import Qt, QTime, Slot
+from PySide2.QtCore import Qt, Slot
 
 import ble
 
@@ -32,6 +31,7 @@ class BLEWidget(QWidget):
     alarm_edit: QTimeEdit
 
     battery_value: QProgressBar
+    battery_voltage: QLabel
 
     id_edit: QLineEdit
     frame_edit: QLineEdit
@@ -128,7 +128,9 @@ class BLEWidget(QWidget):
             self.content_frame.setVisible(False)
 
     def set_battery(self, value: int):
-        self.battery_value.setValue(value)
+        valuef = value / 100.0
+        self.battery_value.setValue(max((valuef - 3.3) / (4.2 - 3.3), 0) * 100.0)
+        self.battery_voltage.setText("{:.1f} V".format(valuef))
 
     def set_device_time(self, time: datetime):
         now = datetime.now()
@@ -323,7 +325,15 @@ class BLEWidget(QWidget):
             status_box = QGroupBox("Status")
             layout_box = QVBoxLayout()
 
-            layout_box.addWidget(QLabel("Battery:"))
+            grid_box = QGridLayout()
+            grid_box.setHorizontalSpacing(10)
+            grid_box.addWidget(QLabel("Battery:"), 0, 0, 1, 1)
+
+            self.battery_voltage = QLabel("0.0 V")
+            self.battery_voltage.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            grid_box.addWidget(self.battery_voltage, 0, 2)
+
+            layout_box.addItem(grid_box)
 
             self.battery_value = QProgressBar(maximum=100)
             self.battery_value.setSizePolicy(QSizePolicy.Minimum, QSizePolicy.Fixed)
@@ -450,7 +460,7 @@ class BLEWidget(QWidget):
             self.disconnect_button = QPushButton("Disconnect")
             self.disconnect_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.ble_device.disconnect_device(), asyncio.get_event_loop()))
             layout_box.addWidget(self.disconnect_button)
-            layout_box.addWidget(QPushButton("Download logs"))
+            # layout_box.addWidget(QPushButton("Download logs"))
 
             layout_box.addStretch()
 
