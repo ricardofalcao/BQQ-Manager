@@ -37,7 +37,7 @@ jobs:
         include:
           - os: windows-latest
             TARGET: windows
-            CMD_BUILD: pyinstaller --onefile --windowed --icon icons/bsc.ico --name BBQ-Manager --add-data icons;icons main.py
+            CMD_BUILD: pyinstaller --onefile --windowed --icon icons/bsc.ico --name BBQ-Manager --add-data "icons/*;icons" main.py
             OUT_FILE_NAME: BBQ-Manager.exe
             ASSET_MIME: application/vnd.microsoft.portable-executable
     steps:
