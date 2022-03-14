@@ -8,11 +8,11 @@ from PySide2.QtWidgets import (QPushButton,
                                QListWidgetItem, QAbstractItemView)
 from PySide2.QtCore import Qt, Slot
 
-import ble
+from ble import Device, Scanner
 
 
-class BLEWidget(QWidget):
-    ble_device: ble.Device
+class MainWidget(QWidget):
+    ble_device: Device
 
     device_list: QListWidget
     device_list_frame: QFrame
@@ -46,7 +46,7 @@ class BLEWidget(QWidget):
 
     firmware_value: QLabel
 
-    def __init__(self, ble_scanner: ble.BLEScanner):
+    def __init__(self, ble_scanner: Scanner):
         QWidget.__init__(self)
 
         self.ble_scanner = ble_scanner
@@ -71,12 +71,25 @@ class BLEWidget(QWidget):
 
         self.setLayout(layout)
 
+        #
+        ble_scanner.scan_started.connect(lambda: self.update_scan_button(True))
+        ble_scanner.scan_finished.connect(lambda: self.update_scan_button(False))
+
+        #
+        ble_scanner.disconnect_started.connect(lambda: self.update_disconnect_all_button(True))
+        ble_scanner.disconnect_finished.connect(lambda: self.update_disconnect_all_button(False))
+
+        #
+        ble_scanner.device_connected.connect(self.add_device)
+        ble_scanner.device_disconnecting.connect(lambda: self.update_disconnect_button(True))
+        ble_scanner.device_disconnected.connect(self.remove_device)
+
     #
     #
     #
 
-    @Slot(ble.Device)
-    def add_device(self, device: ble.Device):
+    @Slot(Device)
+    def add_device(self, device: Device):
         item = QListWidgetItem(self.device_list)
         device.list_widget = item
         device.list_widget_label = QLabel(device.name)
@@ -85,8 +98,8 @@ class BLEWidget(QWidget):
         self.device_list.addItem(item)
         self.device_list.setItemWidget(item, device.list_widget_label)
 
-    @Slot(ble.Device)
-    def update_device(self, device: ble.Device):
+    @Slot(Device)
+    def update_device(self, device: Device):
         self.ble_device = device
 
         if device.name:
@@ -118,8 +131,8 @@ class BLEWidget(QWidget):
             self.empty_device.setVisible(False)
             self.content_frame.setVisible(True)
 
-    @Slot(ble.Device)
-    def remove_device(self, device: ble.Device):
+    @Slot(Device)
+    def remove_device(self, device: Device):
         if device.list_widget:
             self.device_list.takeItem(self.device_list.row(device.list_widget))
 

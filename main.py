@@ -8,26 +8,23 @@ An example showing how to write a simple program using the Nordic Semiconductor
 """
 
 import asyncio
+import functools
+import os
 import sys
-import threading
 
+import qasync
 from PySide2.QtCore import QSize
 from PySide2.QtGui import QIcon
-from bleak import BleakScanner
-
 from PySide2.QtWidgets import QApplication
 
-import ble
-import gui
 
 #
 #
 #
 
+from ble import Scanner
+from gui import MainWidget
 
-#
-#
-#
 
 def resource_path(relative_path):
     """ Get absolute path to resource, works for dev and for PyInstaller """
@@ -39,13 +36,24 @@ def resource_path(relative_path):
 
     return os.path.join(base_path, relative_path)
 
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
+
+async def main():
+    def close_future(future, loop):
+        loop.call_later(10, future.cancel)
+        future.cancel()
 
     loop = asyncio.get_event_loop()
-    ble_scanner = ble.BLEScanner(loop)
+    future = asyncio.Future()
 
-    widget = gui.BLEWidget(ble_scanner)
+    app = QApplication.instance()
+    if hasattr(app, "aboutToQuit"):
+        getattr(app, "aboutToQuit").connect(
+            functools.partial(close_future, future, loop)
+        )
+
+    ble_scanner = Scanner()
+
+    widget = MainWidget(ble_scanner)
     widget.setWindowTitle("BBQ Manager")
 
     icon = QIcon()
@@ -58,33 +66,22 @@ if __name__ == "__main__":
     widget.show()
 
     #
-    ble_scanner.scan_started.connect(lambda: widget.update_scan_button(True))
-    ble_scanner.scan_finished.connect(lambda: widget.update_scan_button(False))
 
-    #
-    ble_scanner.disconnect_started.connect(lambda: widget.update_disconnect_all_button(True))
-    ble_scanner.disconnect_finished.connect(lambda: widget.update_disconnect_all_button(False))
+    asyncio.run_coroutine_threadsafe(ble_scanner.scan_ble_devices(), loop)
 
-    #
-    ble_scanner.device_connected.connect(widget.add_device)
-    ble_scanner.device_disconnecting.connect(lambda: widget.update_disconnect_button(True))
-    ble_scanner.device_disconnected.connect(widget.remove_device)
-
-    #
-    asyncio.run_coroutine_threadsafe(ble_scanner.scan_ble_devices(), ble_scanner.loop)
-
-    ble_scanner.start()
-
-    app.exec_()
+    await future
 
     print("Stopping current scan")
-    asyncio.run_coroutine_threadsafe(ble_scanner.stop_ble_scan(), ble_scanner.loop).result()
+    await ble_scanner.stop_ble_scan()
     print("Disconnecting devices")
-    asyncio.run_coroutine_threadsafe(ble_scanner.disconnect_devices(), ble_scanner.loop).result()
-
-    print("Stopping scanner")
-    ble_scanner.stop()
+    await ble_scanner.disconnect_devices()
 
     print("Goodbye")
     sys.exit(0)
 
+
+if __name__ == "__main__":
+    try:
+        qasync.run(main())
+    except asyncio.exceptions.CancelledError:
+        sys.exit(0)

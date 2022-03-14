@@ -1,34 +1,25 @@
 import asyncio
-import threading
-import time
+import json
 from datetime import datetime
-from logging import log
 
-from PySide2 import QtCore
-from PySide2.QtCore import Signal, QObject, QThread
-from PySide2.QtWidgets import QListWidgetItem, QLabel
-
-from bleak import BleakScanner, BleakClient, BleakError
+from PySide2.QtCore import QObject, Signal
+from PySide2.QtWidgets import QLabel, QListWidgetItem
+from bleak import BleakScanner, BleakClient
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
 UART_SERVICE_UUID = "0000ffe0-0000-1000-8000-00805f9b34fb"
 UART_CHAR_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
-
 # All BLE devices have MTU of at least 23. Subtracting 3 bytes overhead, we can
 # safely send 20 bytes at a time to any device supporting this service.
 UART_SAFE_SIZE = 20
 
 
-#
-#
-#
-
-class BLEScanner(QThread):
+class Device(QObject):
     pass
 
 
-class Device(QThread):
+class Scanner(QObject):
     pass
 
 
@@ -36,7 +27,7 @@ class Device(QObject):
     name: str
     client: BleakClient
 
-    updated: Signal = Signal(Device)
+    updated = Signal(Device)
     queued_commands = []
 
     list_widget: QListWidgetItem = None
@@ -56,10 +47,9 @@ class Device(QObject):
     imu_acceleration = (0, 0, 0)
     imu_gyro = (0, 0, 0)
 
-    def __init__(self, loop, scanner: BLEScanner, ble: BLEDevice):
+    def __init__(self, scanner: Scanner, ble: BLEDevice):
         QObject.__init__(self)
 
-        self.loop = loop
         self.scanner = scanner
         self.ble = ble
         self.name = ble.name
@@ -208,6 +198,8 @@ class Device(QObject):
         if self.running:
             return
 
+        print("Connecting device " + self.name)
+
         self.running = True
         self.client = BleakClient(self.ble, disconnected_callback=self.handle_disconnect, loop=asyncio.get_event_loop())
 
@@ -236,11 +228,7 @@ class Device(QObject):
         self.run_task.cancel()
 
 
-#
-#
-#
-
-class BLEScanner(QThread):
+class Scanner(QObject):
     devices = {}
     blacklisted_ids = []
 
@@ -257,24 +245,8 @@ class BLEScanner(QThread):
     device_disconnecting = Signal(Device)
     device_disconnected = Signal(Device)
 
-    def __init__(self, loop):
-        QThread.__init__(self, None)
-
-        self.loop = loop
-
-    def run(self) -> None:
-        asyncio.set_event_loop(self.loop)
-        self.loop.run_forever()
-
-    def stop(self) -> None:
-        print("Stopping loop")
-        self.loop.stop()
-
-        if not self.wait(5000):
-            print("TERMINATE")
-            self.terminate()
-            print("waitinggg")
-        print("byer")
+    def __init__(self):
+        QObject.__init__(self)
 
     async def device_found_callback(self, device: BLEDevice, adv: AdvertisementData):
         if device.address in self.devices:
@@ -291,22 +263,16 @@ class BLEScanner(QThread):
         if device.address in self.blacklisted_ids:
             return
 
-        print("NEW device " + device.name + " - " + device.address)
+        print("New device " + device.name + " - " + device.address)
 
-        new_device = Device(self.loop, self, device)
+        new_device = Device(self, device)
         self.devices[device.address] = new_device
 
-        try:
-            await new_device.connect_device()
-        except asyncio.exceptions.TimeoutError:
-            print(f"Could not connect to {device.address}")
-            pass
+        await new_device.connect_device()
 
     async def scan_ble_devices(self):
         if self.scanning:
             return
-
-        # await self.disconnect_devices()
 
         print("Scanning for devices")
         self.blacklisted_ids.clear()
@@ -318,7 +284,7 @@ class BLEScanner(QThread):
         await self.scanner.start()
 
         print("Waiting...")
-        await asyncio.sleep(20)
+        await asyncio.sleep(10)
 
         print("Stopping scanner")
         await self.stop_ble_scan()
@@ -327,6 +293,7 @@ class BLEScanner(QThread):
         await self.disconnect_trash_devices()
 
         print("Finished scanning")
+
         self.scanning = False
         self.scan_finished.emit()
 
