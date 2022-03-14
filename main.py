@@ -79,7 +79,6 @@ async def main():
     print("Goodbye")
     sys.exit(0)
 
-
 if __name__ == "__main__":
     try:
         qasync.run(main())

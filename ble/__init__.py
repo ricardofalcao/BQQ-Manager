@@ -29,6 +29,7 @@ class Device(QObject):
 
     updated = Signal(Device)
     queued_commands = []
+    pending_receives = {}
 
     list_widget: QListWidgetItem = None
     list_widget_label: QLabel = None
@@ -61,6 +62,16 @@ class Device(QObject):
     #
     #
 
+    async def _get_response(self, command: str):
+        future = asyncio.Future()
+
+        self.pending_receives[command] = future
+        try:
+            result = await asyncio.wait_for(future, 2.0)
+            return result
+        except TimeoutError:
+            return None
+
     async def _send_cmd(self, command: str):
         if not self.running:
             return
@@ -69,10 +80,12 @@ class Device(QObject):
 
         while len(command) > UART_SAFE_SIZE:
             await self.client.write_gatt_char(UART_CHAR_UUID, bytearray((command[0:UART_SAFE_SIZE]).encode()))
+            await asyncio.sleep(0.2)
             command = command[UART_SAFE_SIZE:-1]
 
         if len(command) > 0:
             await self.client.write_gatt_char(UART_CHAR_UUID, bytearray((command + "\n").encode()))
+            await asyncio.sleep(0.2)
 
     async def send_cmd(self, command: str):
         if not self.running:
@@ -90,31 +103,25 @@ class Device(QObject):
         print(f"Received: {data} {command}")
 
         if command == "ping":
-            await self.send_cmd("pong")
+            print("Sending pong")
+            await self._send_cmd("pong")
 
             if not self.connected:
                 self.scanner.device_connected.emit(self)
                 self.connected = True
-        elif command == "time":
-            self.dtime = datetime.strptime(split[1], '%H,%M,%S,%d,%m,%y')
-            self.dtime_changed = True
         elif command == "battery":
             self.battery = int(split[1])
         elif command == "firmware":
             self.firmware = split[1]
-        elif command == "getsettings":
-            split2 = split[1].split(",")
-            self.settings = (int(split2[0]), int(split2[1]))
-            self.settings_changed = True
         elif command == "setsettings":
             if split[1] == "ok":
                 await self.send_cmd("getsettings")
-        elif command == "imudata":
-            split2 = split[1].split(",")
-            self.imu_acceleration = (float(split2[0]), float(split2[1]), float(split2[2]))
-            self.imu_gyro = (float(split2[3]), float(split2[4]), float(split2[5]))
 
         self.updated.emit(self)
+
+        if command in self.pending_receives:
+            self.pending_receives[command].set_result(split[1] if len(split) > 1 else None)
+            self.pending_receives.pop(command)
 
     #
     #
@@ -131,7 +138,7 @@ class Device(QObject):
 
             try:
                 await self.receive_cmd(self.read_buffer)
-            except Exception:
+            except:
                 pass
 
             self.read_buffer = ''
@@ -145,10 +152,10 @@ class Device(QObject):
     #
     #
 
-    def handle_disconnect(self, _: BleakClient):
+    def handle_disconnect(self, client: BleakClient):
         self.running = False
         self.scanner.blacklisted_ids.append(self.ble.address)
-        print("Device was disconnected, goodbye.")
+        print(f"[{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Device was disconnected, goodbye.")
 
         if self.ble.address in self.scanner.devices:
             self.scanner.device_disconnected.emit(self)
@@ -168,17 +175,23 @@ class Device(QObject):
         tick = 0
         tick_duration = 0.5
 
-        await self._sleep(tick_duration)
-        await self._send_cmd("gettime")
-        await self._sleep(tick_duration)
         await self._send_cmd("getsettings")
-        await self._sleep(tick_duration)
+        result = await self._get_response("getsettings")
+        split2 = result[1].split(",")
+        self.settings = (int(split2[0]), int(split2[1]))
+        self.settings_changed = True
 
         while self.running:
             await self._send_cmd("gettime")
-            await self._sleep(tick_duration)
+            result = await self._get_response("time")
+            self.dtime = datetime.strptime(result[1], '%H,%M,%S,%d,%m,%y')
+            self.dtime_changed = True
+
             await self._send_cmd("imudata")
-            await self._sleep(tick_duration)
+            result = self._get_response("imudata")
+            split2 = result[1].split(",")
+            self.imu_acceleration = (float(split2[0]), float(split2[1]), float(split2[2]))
+            self.imu_gyro = (float(split2[3]), float(split2[4]), float(split2[5]))
 
             if tick % 4 == 0:
                 await self._send_cmd("battery")
@@ -198,17 +211,20 @@ class Device(QObject):
         if self.running:
             return
 
-        print("Connecting device " + self.name)
+        print(f"[{datetime.now().strftime('%d/%m/%Y %H:%M:%S')}] Connecting device " + self.name)
 
         self.running = True
         self.client = BleakClient(self.ble, disconnected_callback=self.handle_disconnect, loop=asyncio.get_event_loop())
 
         self.updated.emit(self)
 
-        await self.client.connect()
-        await self.client.start_notify(UART_CHAR_UUID, self.handle_rx)
+        try:
+            await self.client.connect()
+            await self.client.start_notify(UART_CHAR_UUID, self.handle_rx)
 
-        self.run_task = asyncio.run_coroutine_threadsafe(self.run(), asyncio.get_event_loop())
+            await self.run()
+        except:
+            await self.disconnect_device()
 
     async def disconnect_device(self):
         if not self.running:
@@ -224,9 +240,6 @@ class Device(QObject):
         if self.ble.address in self.scanner.devices:
             self.scanner.device_disconnected.emit(self)
             del self.scanner.devices[self.ble.address]
-
-        self.run_task.cancel()
-
 
 class Scanner(QObject):
     devices = {}
@@ -263,6 +276,9 @@ class Scanner(QObject):
         if device.address in self.blacklisted_ids:
             return
 
+        if device.name != 'BBQ3':
+            return
+
         print("New device " + device.name + " - " + device.address)
 
         new_device = Device(self, device)
@@ -284,7 +300,7 @@ class Scanner(QObject):
         await self.scanner.start()
 
         print("Waiting...")
-        await asyncio.sleep(10)
+        await asyncio.sleep(30)
 
         print("Stopping scanner")
         await self.stop_ble_scan()
