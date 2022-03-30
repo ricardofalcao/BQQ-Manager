@@ -1,14 +1,17 @@
 import asyncio
 from datetime import datetime
 
-from PySide2.QtGui import QIntValidator, QColor, QPalette
+from PySide2.QtGui import QIntValidator, QColor, QPalette, QStandardItemModel, QStandardItem, QIcon
 from PySide2.QtWidgets import (QPushButton,
                                QVBoxLayout, QWidget, QHBoxLayout, QListWidget, QSplitter, QFrame, QGridLayout,
                                QGroupBox, QLabel, QSpacerItem, QSizePolicy, QProgressBar, QTimeEdit, QLineEdit,
-                               QListWidgetItem, QAbstractItemView)
-from PySide2.QtCore import Qt, Slot
+                               QListWidgetItem, QAbstractItemView, QTableWidget, QHeaderView, QTableWidgetItem,
+                               QCheckBox, QTreeView, QFileIconProvider, QMenu, QErrorMessage, QMessageBox)
+from PySide2.QtCore import Qt, Slot, QTime
+from qasync import asyncSlot
 
 from ble import Device, Scanner
+from utils.dialogs import QAsyncMessageBox, QAsyncFileDialog
 
 
 class MainWidget(QWidget):
@@ -27,9 +30,6 @@ class MainWidget(QWidget):
 
     time_value: QLabel
 
-    alarm_value: QLabel
-    alarm_edit: QTimeEdit
-
     battery_value: QProgressBar
     battery_voltage: QLabel
 
@@ -45,6 +45,15 @@ class MainWidget(QWidget):
     imu_gyro_z: QLabel
 
     firmware_value: QLabel
+
+    alarms_time: list[QTimeEdit] = [None] * 12
+    alarms_duration: list[QTimeEdit] = [None] * 12
+    alarms_enabled: list[QCheckBox] = [None] * 12
+
+    file_icon_provider: QFileIconProvider
+    files_root: QStandardItem
+    files_progress: QProgressBar
+    files_text: QLabel
 
     def __init__(self, ble_scanner: Scanner):
         QWidget.__init__(self)
@@ -65,7 +74,7 @@ class MainWidget(QWidget):
         self.empty_device.setVisible(True)
         self.content_frame.setVisible(False)
 
-        splitter.setSizes([200, 500, 500])
+        splitter.setSizes([150, 500, 500])
 
         layout.addWidget(splitter)
 
@@ -112,12 +121,22 @@ class MainWidget(QWidget):
             device.dtime_changed = False
             self.set_device_time(device.dtime)
 
-        self.set_alarm_time(device.alarm_time)
         self.set_imu(device.imu_acceleration, device.imu_gyro)
 
         if device.settings_changed:
             device.settings_changed = False
             self.set_settings(device.settings)
+
+        if device.alarms_changed:
+            device.alarms_changed = False
+            self.set_alarms(device.alarms)
+
+        if device.folders_changed:
+            device.folders_changed = False
+            self.set_files(device.folders)
+
+        self.files_text.setText(device.folders_message)
+        self.files_progress.setValue(device.folders_progress * 100)
 
     @Slot(QListWidgetItem, QListWidgetItem)
     def select_device(self, current, previous):
@@ -166,29 +185,43 @@ class MainWidget(QWidget):
     def set_device_firmware(self, firmware: str):
         self.firmware_value.setText(firmware)
 
-    def set_alarm_time(self, time: datetime):
-        if time == datetime.min:
-            self.alarm_value.setText("unknown")
-            # self.alarm_edit.setTime(QTime(0, 0, 0))
-        else:
-            self.alarm_value.setText(time.strftime("%d/%m/%Y %H:%M:%S"))
-            # self.alarm_edit.setTime(QTime(time.hour, time.minute, time.second))
-
     def set_settings(self, settings):
-        #if not self.id_edit.hasFocus():
+        # if not self.id_edit.hasFocus():
         self.id_edit.setText(str(settings[0]))
 
-        #if not self.frame_edit.hasFocus():
+        # if not self.frame_edit.hasFocus():
         self.frame_edit.setText(str(settings[1]))
 
     def set_imu(self, imu_acceleration, imu_gyro):
-        self.imu_acceleration_x.setText(f"X: { imu_acceleration[0] }")
-        self.imu_acceleration_y.setText(f"Y: { imu_acceleration[1] }")
-        self.imu_acceleration_z.setText(f"Z: { imu_acceleration[2] }")
+        self.imu_acceleration_x.setText("X: %.2f" % imu_acceleration[0])
+        self.imu_acceleration_y.setText("Y: %.2f" % imu_acceleration[1])
+        self.imu_acceleration_z.setText("Z: %.2f" % imu_acceleration[2])
 
-        self.imu_gyro_x.setText(f"X: { imu_gyro[0] }")
-        self.imu_gyro_y.setText(f"Y: { imu_gyro[1] }")
-        self.imu_gyro_z.setText(f"Z: { imu_gyro[2] }")
+        self.imu_gyro_x.setText("X: %.2f" % imu_gyro[0])
+        self.imu_gyro_y.setText("Y: %.2f" % imu_gyro[1])
+        self.imu_gyro_z.setText("Z: %.2f" % imu_gyro[2])
+
+    def set_alarms(self, alarms):
+        for i, alarm in enumerate(alarms):
+            self.alarms_time[i].setTime(QTime(alarm.hour, alarm.minute))
+            self.alarms_duration[i].setTime(QTime(0, alarm.duration))
+            self.alarms_enabled[i].setChecked(alarm.enabled)
+
+    def set_files(self, folders):
+        self.files_root.removeRows(0, self.files_root.rowCount())
+
+        for folder in folders:
+            folderItem = QStandardItem(self.file_icon_provider.icon(QFileIconProvider.Folder), folder.name)
+            folderItem.setEditable(False)
+            folderItem.setData(2)
+
+            for file in folder.children:
+                fileItem = QStandardItem(self.file_icon_provider.icon(QFileIconProvider.File), file.name)
+                fileItem.setEditable(False)
+                fileItem.setData(3)
+                folderItem.appendRow(fileItem)
+
+            self.files_root.appendRow(folderItem)
 
     #
     #
@@ -197,29 +230,48 @@ class MainWidget(QWidget):
     async def sync_device_time(self, time: datetime):
         if self.ble_device:
             t = time.strftime('%H,%M,%S,%d,%m,%y')
-            await self.ble_device.send_cmd(f"synctime:{ t }")
-
-    async def sync_device_alarm(self):
-        if self.ble_device:
-            qtime = self.alarm_edit.time()
-
-            await self.ble_device.send_cmd(f"wakeup:{ qtime.minute() },{ qtime.hour() },*")
+            self.ble_device.send_cmd(f"synctime:{t}")
 
     async def refresh_device_settings(self):
         if self.ble_device:
-            await self.ble_device.send_cmd("getsettings")
+            self.ble_device.send_cmd("getsettings")
 
     async def set_device_settings(self):
         if self.ble_device:
-            await self.ble_device.send_cmd(f"setsettings:{self.id_edit.text()},{self.frame_edit.text()}")
+            self.ble_device.send_cmd(f"setsettings:{self.id_edit.text()},{self.frame_edit.text()}")
 
     async def reset_imu(self):
         if self.ble_device:
-            await self.ble_device.send_cmd("imureset")
+            self.ble_device.send_cmd("imureset")
 
     async def calibrate_imu(self):
         if self.ble_device:
-            await self.ble_device.send_cmd("imucalib")
+            self.ble_device.send_cmd("imucalib")
+
+    @asyncSlot()
+    async def refresh_alarms(self):
+        if self.ble_device:
+            self.ble_device.send_cmd("alarmGET")
+
+    @asyncSlot()
+    async def refresh_files(self):
+        if self.ble_device and not self.ble_device.folders_pending:
+            self.ble_device.folders_pending = True
+            self.files_root.removeRows(0, self.files_root.rowCount())
+            self.ble_device.send_cmd("gnfolders:*")
+
+    @asyncSlot()
+    async def update_alarms(self):
+        if self.ble_device:
+            command = 'alarmSET:'
+            for i in range(12):
+                time = self.alarms_time[i].time()
+                duration = self.alarms_duration[i].time()
+                command += f"{1 if self.alarms_enabled[i].isChecked() else 0},{time.hour()},{time.minute()},{duration.hour() * 60 + duration.minute()},"
+
+            print(command)
+            self.ble_device.send_cmd(command[:-1])
+
     #
     #
     #
@@ -252,7 +304,8 @@ class MainWidget(QWidget):
         self.empty_device = QFrame()
         layout = QVBoxLayout()
 
-        label = QLabel("Please select a device from the device list\nIf the device is not found, please wait a few seconds before scanning again")
+        label = QLabel(
+            "Please select a device from the device list\nIf the device is not found, please wait a few seconds before scanning again")
         label.setAlignment(Qt.AlignCenter)
         layout.addWidget(label)
 
@@ -270,12 +323,15 @@ class MainWidget(QWidget):
         layout.addWidget(self.device_list)
 
         self.scan_button = QPushButton("")
-        self.scan_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.ble_scanner.scan_ble_devices(), asyncio.get_event_loop()))
+        self.scan_button.clicked.connect(
+            lambda: asyncio.run_coroutine_threadsafe(self.ble_scanner.scan_ble_devices(), asyncio.get_event_loop()))
 
         layout.addWidget(self.scan_button)
 
         self.disconnect_all_button = QPushButton("")
-        self.disconnect_all_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.ble_scanner.disconnect_ble_devices(), asyncio.get_event_loop()))
+        self.disconnect_all_button.clicked.connect(
+            lambda: asyncio.run_coroutine_threadsafe(self.ble_scanner.disconnect_ble_devices(),
+                                                     asyncio.get_event_loop()))
         self.update_disconnect_all_button(False)
 
         layout.addWidget(self.disconnect_all_button)
@@ -286,57 +342,31 @@ class MainWidget(QWidget):
         self.content_frame = QFrame()
 
         layout = QGridLayout()
-
-        def time():
-            time_box = QGroupBox("Time")
-            layout_box = QGridLayout()
-
-            layout_box.addWidget(QLabel("Device time:"), 0, 0)
-
-            self.time_value = QLabel()
-            self.time_value.setAlignment(Qt.AlignRight)
-            layout_box.addWidget(self.time_value, 0, 1)
-
-            self.time_sync_button = QPushButton("Sync")
-            self.time_sync_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.sync_device_time(datetime.now()), asyncio.get_event_loop()))
-
-            layout_box.addWidget(self.time_sync_button, 1, 0, 1, 2)
-
-            layout_box.addItem(QSpacerItem(0, 1, QSizePolicy.Fixed, QSizePolicy.Expanding), 3, 0)
-
-            time_box.setLayout(layout_box)
-            layout.addWidget(time_box, 0, 0)
-
-        time()
-
-        def alarm():
-            alarm_box = QGroupBox("Alarm")
-            layout_box = QGridLayout()
-
-            layout_box.addWidget(QLabel("Current wake-up time:"), 0, 0)
-
-            self.alarm_value = QLabel()
-            self.alarm_value.setAlignment(Qt.AlignRight)
-
-            self.alarm_edit = QTimeEdit()
-
-            layout_box.addWidget(self.alarm_value, 0, 1)
-            layout_box.addWidget(self.alarm_edit, 1, 0, 1, 2)
-
-            update_button = QPushButton("Update")
-            update_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.sync_device_alarm(), asyncio.get_event_loop()))
-            layout_box.addWidget(update_button, 2, 0, 2, 2)
-
-            layout_box.addItem(QSpacerItem(0, 1, QSizePolicy.Fixed, QSizePolicy.Expanding), 4, 0)
-
-            alarm_box.setLayout(layout_box)
-            layout.addWidget(alarm_box, 1, 0)
-
-        alarm()
+        layout.setColumnStretch(0, 1)
+        layout.setColumnStretch(1, 1)
+        layout.setColumnStretch(2, 1)
 
         def status():
             status_box = QGroupBox("Status")
             layout_box = QVBoxLayout()
+
+            grid_box = QGridLayout()
+            grid_box.addWidget(QLabel("Device time:"), 0, 0)
+
+            self.time_value = QLabel()
+            self.time_value.setAlignment(Qt.AlignRight)
+            grid_box.addWidget(self.time_value, 0, 1)
+
+            self.time_sync_button = QPushButton("Sync")
+            self.time_sync_button.clicked.connect(
+                lambda: asyncio.run_coroutine_threadsafe(self.sync_device_time(datetime.now()),
+                                                         asyncio.get_event_loop()))
+
+            grid_box.addWidget(self.time_sync_button, 1, 0, 1, 2)
+
+            grid_box.addItem(QSpacerItem(0, 1, QSizePolicy.Fixed, QSizePolicy.Expanding), 3, 0)
+
+            layout_box.addItem(grid_box)
 
             grid_box = QGridLayout()
             grid_box.setHorizontalSpacing(10)
@@ -357,7 +387,7 @@ class MainWidget(QWidget):
             layout_box.addStretch()
 
             status_box.setLayout(layout_box)
-            layout.addWidget(status_box, 0, 1)
+            layout.addWidget(status_box, 0, 0)
 
         status()
 
@@ -366,7 +396,7 @@ class MainWidget(QWidget):
             layout_box = QVBoxLayout()
 
             grid_box = QGridLayout()
-            grid_box.setHorizontalSpacing(10)
+            grid_box.setHorizontalSpacing(15)
             grid_box.addWidget(QLabel("Acceleration:"), 0, 0, 1, 1)
 
             self.imu_acceleration_x = QLabel("X: 0.0")
@@ -390,17 +420,19 @@ class MainWidget(QWidget):
             layout_box.addItem(grid_box)
 
             reset_button = QPushButton("Reset")
-            reset_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.reset_imu(), asyncio.get_event_loop()))
+            reset_button.clicked.connect(
+                lambda: asyncio.run_coroutine_threadsafe(self.reset_imu(), asyncio.get_event_loop()))
             layout_box.addWidget(reset_button)
 
             calib_button = QPushButton("Calibrate")
-            calib_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.calibrate_imu(), asyncio.get_event_loop()))
+            calib_button.clicked.connect(
+                lambda: asyncio.run_coroutine_threadsafe(self.calibrate_imu(), asyncio.get_event_loop()))
             # layout_box.addWidget(calib_button)
 
             layout_box.addStretch()
 
             imu_box.setLayout(layout_box)
-            layout.addWidget(imu_box, 1, 1)
+            layout.addWidget(imu_box, 0, 1)
 
         imu()
 
@@ -444,42 +476,172 @@ class MainWidget(QWidget):
             layout_box.addStretch()
 
             settings_box.setLayout(layout_box)
-            layout.addWidget(settings_box, 2, 0, 2, 1)
+            layout.addWidget(settings_box, 0, 2)
 
         settings()
-
-        def firmware():
-            firmware_box = QGroupBox("Firmware")
-            layout_box = QGridLayout()
-
-            layout_box.addWidget(QLabel("Device firmware:"), 0, 0)
-
-            self.firmware_value = QLabel()
-            self.firmware_value.setAlignment(Qt.AlignRight)
-            self.set_device_firmware("unknown")
-            layout_box.addWidget(self.firmware_value, 0, 1)
-
-            layout_box.addItem(QSpacerItem(0, 1, QSizePolicy.Fixed, QSizePolicy.Expanding), 2, 0)
-
-            firmware_box.setLayout(layout_box)
-            layout.addWidget(firmware_box, 2, 1)
-
-        firmware()
 
         def actions():
             actions_box = QGroupBox("Actions")
             layout_box = QVBoxLayout()
 
             self.disconnect_button = QPushButton("Disconnect")
-            self.disconnect_button.clicked.connect(lambda: asyncio.run_coroutine_threadsafe(self.ble_device.disconnect_device(), asyncio.get_event_loop()))
+            self.disconnect_button.clicked.connect(
+                lambda: asyncio.run_coroutine_threadsafe(self.ble_device.disconnect_device(), asyncio.get_event_loop()))
             layout_box.addWidget(self.disconnect_button)
             # layout_box.addWidget(QPushButton("Download logs"))
 
             layout_box.addStretch()
 
+            self.firmware_value = QLabel()
+            self.firmware_value.setAlignment(Qt.AlignRight)
+            self.set_device_firmware("unknown")
+            layout_box.addWidget(self.firmware_value)
+
             actions_box.setLayout(layout_box)
-            layout.addWidget(actions_box, 3, 1)
+            layout.addWidget(actions_box, 1, 2)
 
         actions()
+
+        def alarm():
+            actions_box = QGroupBox("Alarms")
+            layout_box = QVBoxLayout()
+
+            tableWidget = QTableWidget(12, 3)
+            tableWidget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+            tableWidget.setFocusPolicy(Qt.NoFocus)
+            tableWidget.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+            tableWidget.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+            tableWidget.setSelectionMode(QAbstractItemView.NoSelection)
+            tableWidget.setHorizontalHeaderLabels(["Time", "Duration", "Enabled"])
+
+            tableWidget.setStyleSheet("""
+                QTableWidget::item { margin: 1px 0px; vertical-align: middle; }
+                """)
+            for i in range(12):
+                cell_widget = QWidget()
+                cell_layout = QVBoxLayout();
+                timeEdit = QTimeEdit()
+                timeEdit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                timeEdit.setFrame(QFrame.NoFrame)
+
+                self.alarms_time[i] = timeEdit
+
+                cell_layout.addWidget(timeEdit)
+                cell_layout.setAlignment(Qt.AlignCenter)
+                cell_layout.setContentsMargins(0, 0, 0, 0)
+                cell_widget.setLayout(cell_layout)
+
+                tableWidget.setCellWidget(i, 0, cell_widget)
+
+                cell_widget = QWidget()
+                cell_layout = QVBoxLayout();
+                durationEdit = QTimeEdit()
+                durationEdit.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                durationEdit.setFrame(QFrame.NoFrame)
+
+                self.alarms_duration[i] = durationEdit
+
+                cell_layout.addWidget(durationEdit)
+                cell_layout.setAlignment(Qt.AlignCenter)
+                cell_layout.setContentsMargins(0, 0, 0, 0)
+                cell_widget.setLayout(cell_layout)
+                tableWidget.setCellWidget(i, 1, durationEdit)
+
+                cell_widget = QWidget()
+                cell_layout = QHBoxLayout();
+                checkbox = QCheckBox()
+
+                self.alarms_enabled[i] = checkbox
+
+                cell_layout.addWidget(checkbox)
+                cell_layout.setAlignment(Qt.AlignCenter)
+                cell_layout.setContentsMargins(0, 0, 0, 0)
+                cell_widget.setLayout(cell_layout)
+
+                tableWidget.setCellWidget(i, 2, cell_widget)
+
+            header = tableWidget.horizontalHeader()
+            header.setSectionResizeMode(0, QHeaderView.Stretch)
+            header.setSectionResizeMode(1, QHeaderView.Stretch)
+            header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+
+            layout_box.addWidget(tableWidget)
+
+            update_button = QPushButton("Update")
+            update_button.clicked.connect(self.update_alarms)
+            layout_box.addWidget(update_button)
+
+            refresh_button = QPushButton("Refresh")
+            refresh_button.clicked.connect(self.refresh_alarms)
+            layout_box.addWidget(refresh_button)
+
+            actions_box.setLayout(layout_box)
+            layout.addWidget(actions_box, 1, 0, 2, 1)
+
+        alarm()
+
+        def files():
+            actions_box = QGroupBox("Files")
+            layout_box = QVBoxLayout()
+
+            tree_view = QTreeView()
+            tree_view.setDragEnabled(False)
+            tree_view.setContextMenuPolicy(Qt.CustomContextMenu)
+
+            self.file_icon_provider = QFileIconProvider()
+
+            model = QStandardItemModel()
+            model.setHorizontalHeaderLabels(['Name'])
+
+            self.files_root = model.invisibleRootItem()
+
+            # test = QStandardItem(icon_provider.icon(QFileIconProvider.Folder), "Teste")
+
+            tree_view.setModel(model)
+            layout_box.addWidget(tree_view)
+
+            refresh_button = QPushButton("Refresh")
+            refresh_button.clicked.connect(self.refresh_files)
+            layout_box.addWidget(refresh_button)
+
+            footer_grid = QGridLayout()
+            self.files_progress = QProgressBar()
+            footer_grid.addWidget(self.files_progress, 0, 0)
+
+            self.files_text = QLabel("")
+            self.files_text.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            footer_grid.addWidget(self.files_text, 0, 1)
+            footer_grid.setColumnStretch(0, 1)
+            footer_grid.setColumnStretch(1, 1)
+            layout_box.addItem(footer_grid)
+
+            actions_box.setLayout(layout_box)
+            layout.addWidget(actions_box, 1, 1)
+
+            @Slot()
+            def menuClick(pos):
+                index = tree_view.indexAt(pos)
+                if not index.isValid():
+                    return
+
+                it = model.itemFromIndex(index)
+
+                menu = QMenu()
+
+                if it.data() == 2:
+                    delete_action = menu.addAction("&Delete")
+                    action = menu.exec_(tree_view.viewport().mapToGlobal(pos))
+                    if action == delete_action:
+                        self.ble_device.delete_folder(it.text())
+                elif it.data() == 3:
+                    download_action = menu.addAction("&Download")
+                    action = menu.exec_(tree_view.viewport().mapToGlobal(pos))
+                    if action == download_action:
+                        folder = it.parent().text()
+                        self.ble_device.download_file(folder, it.text())
+
+            tree_view.customContextMenuRequested.connect(menuClick)
+
+        files()
 
         self.content_frame.setLayout(layout)

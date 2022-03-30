@@ -52,6 +52,7 @@ async def main():
         )
 
     ble_scanner = Scanner()
+    loop.create_task(ble_scanner.scan_ble_devices())
 
     widget = MainWidget(ble_scanner)
     widget.setWindowTitle("BBQ Manager")
@@ -66,8 +67,6 @@ async def main():
     widget.show()
 
     #
-
-    asyncio.run_coroutine_threadsafe(ble_scanner.scan_ble_devices(), loop)
 
     await future
 
