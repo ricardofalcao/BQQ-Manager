@@ -37,19 +37,10 @@ def resource_path(relative_path):
     return os.path.join(base_path, relative_path)
 
 
-async def main():
-    def close_future(future, loop):
-        loop.call_later(10, future.cancel)
-        future.cancel()
-
-    loop = asyncio.get_event_loop()
-    future = asyncio.Future()
-
-    app = QApplication.instance()
-    if hasattr(app, "aboutToQuit"):
-        getattr(app, "aboutToQuit").connect(
-            functools.partial(close_future, future, loop)
-        )
+def main():
+    app = QApplication(sys.argv)
+    loop = qasync.QEventLoop(app)
+    asyncio.set_event_loop(loop)
 
     ble_scanner = Scanner()
     loop.create_task(ble_scanner.scan_ble_devices())
@@ -66,21 +57,12 @@ async def main():
     widget.resize(1000, 600)
     widget.show()
 
-    #
-
-    await future
-
-    print("Stopping current scan")
-    await ble_scanner.stop_ble_scan()
-    print("Disconnecting devices")
-    await ble_scanner.disconnect_devices()
+    with loop:
+        loop.run_forever()
 
     print("Goodbye")
     sys.exit(0)
 
 
 if __name__ == "__main__":
-    try:
-        qasync.run(main())
-    except asyncio.exceptions.CancelledError:
-        sys.exit(0)
+    main()

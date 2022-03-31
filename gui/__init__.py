@@ -48,7 +48,6 @@ class MainWidget(QWidget):
 
     alarms_time: list[QTimeEdit] = [None] * 12
     alarms_duration: list[QTimeEdit] = [None] * 12
-    alarms_enabled: list[QCheckBox] = [None] * 12
 
     file_icon_provider: QFileIconProvider
     files_root: QStandardItem
@@ -205,7 +204,6 @@ class MainWidget(QWidget):
         for i, alarm in enumerate(alarms):
             self.alarms_time[i].setTime(QTime(alarm.hour, alarm.minute))
             self.alarms_duration[i].setTime(QTime(0, alarm.duration))
-            self.alarms_enabled[i].setChecked(alarm.enabled)
 
     def set_files(self, folders):
         self.files_root.removeRows(0, self.files_root.rowCount())
@@ -267,7 +265,8 @@ class MainWidget(QWidget):
             for i in range(12):
                 time = self.alarms_time[i].time()
                 duration = self.alarms_duration[i].time()
-                command += f"{1 if self.alarms_enabled[i].isChecked() else 0},{time.hour()},{time.minute()},{duration.hour() * 60 + duration.minute()},"
+                durationMinutes = duration.hour() * 60 + duration.minute()
+                command += f"{1 if durationMinutes > 0 else 0},{time.hour()},{time.minute()},{durationMinutes},"
 
             print(command)
             self.ble_device.send_cmd(command[:-1])
@@ -506,13 +505,13 @@ class MainWidget(QWidget):
             actions_box = QGroupBox("Alarms")
             layout_box = QVBoxLayout()
 
-            tableWidget = QTableWidget(12, 3)
+            tableWidget = QTableWidget(12, 2)
             tableWidget.setEditTriggers(QAbstractItemView.NoEditTriggers)
             tableWidget.setFocusPolicy(Qt.NoFocus)
             tableWidget.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
             tableWidget.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
             tableWidget.setSelectionMode(QAbstractItemView.NoSelection)
-            tableWidget.setHorizontalHeaderLabels(["Time", "Duration", "Enabled"])
+            tableWidget.setHorizontalHeaderLabels(["Time", "Duration"])
 
             tableWidget.setStyleSheet("""
                 QTableWidget::item { margin: 1px 0px; vertical-align: middle; }
@@ -547,23 +546,9 @@ class MainWidget(QWidget):
                 cell_widget.setLayout(cell_layout)
                 tableWidget.setCellWidget(i, 1, durationEdit)
 
-                cell_widget = QWidget()
-                cell_layout = QHBoxLayout();
-                checkbox = QCheckBox()
-
-                self.alarms_enabled[i] = checkbox
-
-                cell_layout.addWidget(checkbox)
-                cell_layout.setAlignment(Qt.AlignCenter)
-                cell_layout.setContentsMargins(0, 0, 0, 0)
-                cell_widget.setLayout(cell_layout)
-
-                tableWidget.setCellWidget(i, 2, cell_widget)
-
             header = tableWidget.horizontalHeader()
             header.setSectionResizeMode(0, QHeaderView.Stretch)
             header.setSectionResizeMode(1, QHeaderView.Stretch)
-            header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
 
             layout_box.addWidget(tableWidget)
 

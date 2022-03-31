@@ -1,6 +1,7 @@
 import asyncio
 import json
 import os
+import sys
 from datetime import datetime
 
 from PySide2.QtCore import QObject, Signal
@@ -90,11 +91,11 @@ class Device(QObject):
     def download_file(self, folder, file):
         print(f'getslog:/{folder}/{file}')
 
-        logs_folder = os.path.join(os.path.dirname(__file__), "logs")
+        logs_folder = os.path.join(os.path.dirname(sys.argv[0]), "logs")
         if not os.path.exists(logs_folder):
             os.makedirs(logs_folder)
 
-        target_path_1 = os.path.join(logs_folder, f"{folder}_{file}")
+        target_path_1 = os.path.join(logs_folder, f"{folder}_{file}.csv")
 
         self.download_file_stream = open(target_path_1, 'w')
         print(target_path_1)
@@ -234,18 +235,23 @@ class Device(QObject):
             elif command == "getslog":
                 split2 = split[1].split(",")
                 self.download_size = int(split2[0])
+                self.download_written = 0
+                self.folders_progress = 0
 
                 self.send_cmd(f"startlog:*")
 
             elif command == "getflog":
-                self.download_written = self.download_written + self.download_file_stream.write(split[1].replace('~', '\n'))
+                buf = split[1][0:-4]
+                self.download_written = self.download_written + self.download_file_stream.write(buf.replace('~', '\n'))
                 self.send_cmd(f"getflog:ok,*")
 
+                print(f"{self.download_written} / {self.download_size}")
                 self.folders_progress = self.download_written / self.download_size
                 self.folders_message = f"{human_readable_size(self.download_written)}/{human_readable_size(self.download_size)}"
 
             elif command.startswith("endlog"):
-                print("closed")
+                self.folders_message = 'Finished!'
+
                 self.download_file_stream.flush()
                 self.download_file_stream.close()
 
