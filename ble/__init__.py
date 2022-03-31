@@ -6,7 +6,7 @@ from datetime import datetime
 
 from PySide2.QtCore import QObject, Signal
 from PySide2.QtWidgets import QLabel, QListWidgetItem, QMessageBox
-from bleak import BleakScanner, BleakClient
+from bleak import BleakScanner, BleakClient, BleakError
 from bleak.backends.device import BLEDevice
 from bleak.backends.scanner import AdvertisementData
 
@@ -58,6 +58,7 @@ class Device(QObject):
     folders = []
 
     folders_index = 0
+    folders_disabled = True
     folders_changed = False
     folders_pending = False
     folders_error = False
@@ -88,17 +89,11 @@ class Device(QObject):
         self.folder_pending_delete = folder
         self.send_cmd(f"delfolder:{folder},*")
 
-    def download_file(self, folder, file):
+    def download_file(self, folder, file, target_path):
         print(f'getslog:/{folder}/{file}')
 
-        logs_folder = os.path.join(os.path.dirname(sys.argv[0]), "logs")
-        if not os.path.exists(logs_folder):
-            os.makedirs(logs_folder)
-
-        target_path_1 = os.path.join(logs_folder, f"{folder}_{file}.csv")
-
-        self.download_file_stream = open(target_path_1, 'w')
-        print(target_path_1)
+        self.download_file_stream = open(target_path, 'w')
+        print(target_path)
         self.send_cmd(f'getslog:/{folder}/{file}')
 
     async def _send_cmd(self, command: str):
@@ -292,7 +287,6 @@ class Device(QObject):
 
     def handle_disconnect(self, _: BleakClient):
         self.running = False
-        self.scanner.blacklisted_ids.append(self.ble.address)
         print("Device was disconnected, goodbye.")
 
         if self.ble.address in self.scanner.devices:
@@ -313,6 +307,8 @@ class Device(QObject):
         tick = 0
         tick_duration = 0.2
 
+        self.folders_disabled = True
+
         await self._sleep(tick_duration)
         await self._send_cmd("info")
         await self._sleep(tick_duration)
@@ -322,6 +318,8 @@ class Device(QObject):
         await self._sleep(tick_duration)
         await self._send_cmd("firmware")
         await self._sleep(tick_duration)
+
+        self.folders_disabled = False
 
         while self.running:
             # await self._send_cmd("info")
@@ -350,7 +348,6 @@ class Device(QObject):
 
         await self.client.connect()
         await self.client.start_notify(UART_CHAR_UUID, self.handle_rx)
-        await self.run()
 
     async def disconnect_device(self):
         if not self.running:
@@ -369,7 +366,6 @@ class Device(QObject):
 
 class Scanner(QObject):
     devices = {}
-    blacklisted_ids = []
 
     scanner: BleakScanner = None
     scanning = False
@@ -399,43 +395,44 @@ class Scanner(QObject):
         if UART_SERVICE_UUID.lower() not in adv.service_uuids:
             return
 
-        if device.address in self.blacklisted_ids:
-            return
-
         print("New device " + device.name + " - " + device.address)
+
+        loop = asyncio.get_event_loop()
 
         new_device = Device(self, device)
         self.devices[device.address] = new_device
 
-        loop = asyncio.get_event_loop()
-        loop.create_task(new_device.connect_device())
+        try:
+            await new_device.connect_device()
+            loop.create_task(new_device.run())
+        except Exception:
+            if device.address in self.devices:
+                self.devices.pop(device.address)
 
     async def scan_ble_devices(self):
-        if self.scanning:
-            return
+        try:
+            if self.scanning:
+                return
 
-        print("Scanning for devices")
-        self.blacklisted_ids.clear()
+            print("Scanning for devices")
+            self.scanning = True
+            self.scan_started.emit()
 
-        self.scanning = True
-        self.scan_started.emit()
+            self.scanner = BleakScanner(detection_callback=self.device_found_callback)
+            await self.scanner.start()
 
-        self.scanner = BleakScanner(detection_callback=self.device_found_callback)
-        await self.scanner.start()
+            print("Waiting...")
+            await asyncio.sleep(10)
 
-        print("Waiting...")
-        await asyncio.sleep(10)
+            print("Stopping scanner")
+            await self.stop_ble_scan()
 
-        print("Stopping scanner")
-        await self.stop_ble_scan()
+            print("Finished scanning")
 
-        print("Disposing unconnected devices")
-        await self.disconnect_trash_devices()
-
-        print("Finished scanning")
-
-        self.scanning = False
-        self.scan_finished.emit()
+            self.scanning = False
+            self.scan_finished.emit()
+        except Exception as ex:
+            print(ex)
 
     #
     #
@@ -454,14 +451,6 @@ class Scanner(QObject):
         self.disconnect_started.emit()
         await self.disconnect_devices()
         self.disconnect_finished.emit()
-
-    async def disconnect_trash_devices(self):
-        l = list(self.devices.values())
-
-        for i in range(len(self.devices)):
-            device = l[i]
-            if not device.connected:
-                await device.disconnect_device()
 
     async def disconnect_devices(self):
         l = list(self.devices.values())

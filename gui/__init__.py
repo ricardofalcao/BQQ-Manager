@@ -6,8 +6,8 @@ from PySide2.QtWidgets import (QPushButton,
                                QVBoxLayout, QWidget, QHBoxLayout, QListWidget, QSplitter, QFrame, QGridLayout,
                                QGroupBox, QLabel, QSpacerItem, QSizePolicy, QProgressBar, QTimeEdit, QLineEdit,
                                QListWidgetItem, QAbstractItemView, QTableWidget, QHeaderView, QTableWidgetItem,
-                               QCheckBox, QTreeView, QFileIconProvider, QMenu, QErrorMessage, QMessageBox)
-from PySide2.QtCore import Qt, Slot, QTime
+                               QCheckBox, QTreeView, QFileIconProvider, QMenu, QErrorMessage, QMessageBox, QFileDialog)
+from PySide2.QtCore import Qt, Slot, QTime, QDir
 from qasync import asyncSlot
 
 from ble import Device, Scanner
@@ -53,6 +53,7 @@ class MainWidget(QWidget):
     files_root: QStandardItem
     files_progress: QProgressBar
     files_text: QLabel
+    files_refresh_button: QPushButton
 
     def __init__(self, ble_scanner: Scanner):
         QWidget.__init__(self)
@@ -133,6 +134,8 @@ class MainWidget(QWidget):
         if device.folders_changed:
             device.folders_changed = False
             self.set_files(device.folders)
+
+        self.files_refresh_button.setDisabled(device.folders_disabled)
 
         self.files_text.setText(device.folders_message)
         self.files_progress.setValue(device.folders_progress * 100)
@@ -585,9 +588,9 @@ class MainWidget(QWidget):
             tree_view.setModel(model)
             layout_box.addWidget(tree_view)
 
-            refresh_button = QPushButton("Refresh")
-            refresh_button.clicked.connect(self.refresh_files)
-            layout_box.addWidget(refresh_button)
+            self.files_refresh_button = QPushButton("Refresh")
+            self.files_refresh_button.clicked.connect(self.refresh_files)
+            layout_box.addWidget(self.files_refresh_button)
 
             footer_grid = QGridLayout()
             self.files_progress = QProgressBar()
@@ -623,7 +626,11 @@ class MainWidget(QWidget):
                     action = menu.exec_(tree_view.viewport().mapToGlobal(pos))
                     if action == download_action:
                         folder = it.parent().text()
-                        self.ble_device.download_file(folder, it.text())
+                        target_path, extension = QFileDialog.getSaveFileName(None, 'Select destination file', f'{folder}_{it.text()}.csv', 'CSV files (*.csv)')
+                        if not target_path.endswith('.csv'):
+                            target_path += '.csv'
+
+                        self.ble_device.download_file(folder, it.text(), target_path)
 
             tree_view.customContextMenuRequested.connect(menuClick)
 

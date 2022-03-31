@@ -43,7 +43,6 @@ def main():
     asyncio.set_event_loop(loop)
 
     ble_scanner = Scanner()
-    loop.create_task(ble_scanner.scan_ble_devices())
 
     widget = MainWidget(ble_scanner)
     widget.setWindowTitle("BBQ Manager")
@@ -56,6 +55,8 @@ def main():
 
     widget.resize(1000, 600)
     widget.show()
+
+    loop.create_task(ble_scanner.scan_ble_devices())
 
     with loop:
         loop.run_forever()
