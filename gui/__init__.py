@@ -1,18 +1,38 @@
 import asyncio
+import logging
+import os
+import sys
 from datetime import datetime
 
+from PySide2.QtCore import Qt, Slot, QTime, QSize
 from PySide2.QtGui import QIntValidator, QColor, QPalette, QStandardItemModel, QStandardItem, QIcon
 from PySide2.QtWidgets import (QPushButton,
                                QVBoxLayout, QWidget, QHBoxLayout, QListWidget, QSplitter, QFrame, QGridLayout,
                                QGroupBox, QLabel, QSpacerItem, QSizePolicy, QProgressBar, QTimeEdit, QLineEdit,
-                               QListWidgetItem, QAbstractItemView, QTableWidget, QHeaderView, QTableWidgetItem,
-                               QCheckBox, QTreeView, QFileIconProvider, QMenu, QErrorMessage, QMessageBox)
-from PySide2.QtCore import Qt, Slot, QTime
-from qasync import asyncSlot
+                               QListWidgetItem, QAbstractItemView, QTableWidget, QHeaderView, QCheckBox, QTreeView,
+                               QFileIconProvider, QMenu)
+from bleak import BleakScanner
+from qasync import asyncSlot, asyncClose
 
-from ble import Device, Scanner
-from utils.dialogs import QAsyncMessageBox, QAsyncFileDialog
+from ble2 import Device
 
+logger = logging.getLogger(__name__)
+
+
+def resource_path(relative_path):
+    """ Get absolute path to resource, works for dev and for PyInstaller """
+    try:
+        # PyInstaller creates a temp folder and stores path in _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+
+
+#
+#
+#
 
 class MainWidget(QWidget):
     ble_device: Device
@@ -55,10 +75,16 @@ class MainWidget(QWidget):
     files_progress: QProgressBar
     files_text: QLabel
 
-    def __init__(self, ble_scanner: Scanner):
+    def __init__(self):
         QWidget.__init__(self)
 
-        self.ble_scanner = ble_scanner
+        self.setWindowTitle("BBQ Manager")
+
+        icon = QIcon()
+        for size in [16, 24, 32, 48, 64, 96, 128, 256, 512]:
+            icon.addFile(resource_path(f'icons/{size}.png'), QSize(size, size))
+
+        self.setWindowIcon(icon)
 
         self.create_device_list()
         self.create_empty_device()
@@ -79,22 +105,37 @@ class MainWidget(QWidget):
         layout.addWidget(splitter)
 
         self.setLayout(layout)
+        self.resize(1000, 600)
 
-        #
-        ble_scanner.scan_started.connect(lambda: self.update_scan_button(True))
-        ble_scanner.scan_finished.connect(lambda: self.update_scan_button(False))
+        asyncio.run_coroutine_threadsafe(self.scanBluetooth(), asyncio.get_event_loop())
 
-        #
-        ble_scanner.disconnect_started.connect(lambda: self.update_disconnect_all_button(True))
-        ble_scanner.disconnect_finished.connect(lambda: self.update_disconnect_all_button(False))
-
-        #
-        ble_scanner.device_connected.connect(self.add_device)
-        ble_scanner.device_disconnecting.connect(lambda: self.update_disconnect_button(True))
-        ble_scanner.device_disconnected.connect(self.remove_device)
+    @asyncClose
+    async def closeEvent(self, event):
+        pass
+        # await self.session.close()
 
     #
     #
+    #
+
+    async def scanBluetooth(self):
+        logger.info("Scanning for new devices.")
+        infos = await BleakScanner.discover()
+
+        async def processInfo(info):
+            device = Device(info)
+
+            if await device.connect():
+                while True:
+                    await device.fetch_data()
+            else:
+                await device.disconnect()
+
+        tasks = asyncio.gather(*[processInfo(info) for info in infos])
+        await tasks
+
+    #
+    # Slots
     #
 
     @Slot(Device)

@@ -18,20 +18,14 @@ UART_CHAR_UUID = "0000ffe1-0000-1000-8000-00805f9b34fb"
 # safely send 20 bytes at a time to any device supporting this service.
 UART_SAFE_SIZE = 20
 
-
-class Device(QObject):
-    pass
-
-
 class Scanner(QObject):
     pass
-
 
 class Device(QObject):
     name: str
     client: BleakClient
 
-    updated = Signal(Device)
+    updated = Signal
     queued_commands = []
 
     list_widget: QListWidgetItem = None
