@@ -1,5 +1,6 @@
 import asyncio
 from datetime import datetime
+from math import floor
 
 from PySide2.QtGui import QIntValidator, QColor, QPalette, QStandardItemModel, QStandardItem, QIcon
 from PySide2.QtWidgets import (QPushButton,
@@ -206,7 +207,7 @@ class MainWidget(QWidget):
     def set_alarms(self, alarms):
         for i, alarm in enumerate(alarms):
             self.alarms_time[i].setTime(QTime(alarm.hour, alarm.minute))
-            self.alarms_duration[i].setTime(QTime(0, alarm.duration))
+            self.alarms_duration[i].setTime(QTime(floor(alarm.duration / 60), alarm.duration % 60))
 
     def set_files(self, folders):
         self.files_root.removeRows(0, self.files_root.rowCount())
