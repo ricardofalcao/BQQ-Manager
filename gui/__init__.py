@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime
 from math import floor
+from typing import List
 
 from PySide2.QtGui import QIntValidator, QColor, QPalette, QStandardItemModel, QStandardItem, QIcon
 from PySide2.QtWidgets import (QPushButton,
@@ -47,8 +48,8 @@ class MainWidget(QWidget):
 
     firmware_value: QLabel
 
-    alarms_time: list[QTimeEdit] = [None] * 12
-    alarms_duration: list[QTimeEdit] = [None] * 12
+    alarms_time: List[QTimeEdit] = [None] * 12
+    alarms_duration: List[QTimeEdit] = [None] * 12
 
     file_icon_provider: QFileIconProvider
     files_root: QStandardItem
