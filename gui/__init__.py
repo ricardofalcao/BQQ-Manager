@@ -1,4 +1,5 @@
 import asyncio
+from asyncio import Task
 from datetime import datetime
 
 from PySide2.QtGui import QIntValidator, QColor, QPalette, QStandardItemModel, QStandardItem, QIcon
@@ -20,13 +21,11 @@ class MainWidget(QWidget):
     device_list: QListWidget
     device_list_frame: QFrame
     empty_device: QFrame
+    empty_device_label: QLabel
     content_frame: QFrame
 
     time_sync_button: QPushButton
     scan_button: QPushButton
-    disconnect_all_button: QPushButton
-
-    disconnect_button: QPushButton
 
     time_value: QLabel
 
@@ -85,13 +84,8 @@ class MainWidget(QWidget):
         ble_scanner.scan_finished.connect(lambda: self.update_scan_button(False))
 
         #
-        ble_scanner.disconnect_started.connect(lambda: self.update_disconnect_all_button(True))
-        ble_scanner.disconnect_finished.connect(lambda: self.update_disconnect_all_button(False))
-
-        #
-        ble_scanner.device_connected.connect(self.add_device)
-        ble_scanner.device_disconnecting.connect(lambda: self.update_disconnect_button(True))
-        ble_scanner.device_disconnected.connect(self.remove_device)
+        ble_scanner.device_found.connect(self.add_device)
+        # ble_scanner.device_disconnected.connect(self.remove_device)
 
     #
     #
@@ -140,20 +134,42 @@ class MainWidget(QWidget):
         self.files_text.setText(device.folders_message)
         self.files_progress.setValue(device.folders_progress * 100)
 
-    @Slot(QListWidgetItem, QListWidgetItem)
-    def select_device(self, current, previous):
+    @asyncSlot(QListWidgetItem, QListWidgetItem)
+    async def select_device(self, current, previous):
+        self.empty_device.setVisible(True)
+        self.content_frame.setVisible(False)
+
+        loop = asyncio.get_event_loop()
+
         if previous:
-            previous.device.updated.disconnect(self.update_device)
+            self.empty_device_label.setText('Disconnecting from previous device...')
+            if previous.device.runtask is not None:
+                previous.device.runtask.cancel()
+
+                previous.device.runtask = None
+
+            previous.device.updated.disconnect()
+            await previous.device.disconnect_device()
 
         if current:
+            self.empty_device_label.setText('Connecting to selected device...')
             current.device.updated.connect(self.update_device)
 
-            self.update_device(current.device)
-            self.empty_device.setVisible(False)
-            self.content_frame.setVisible(True)
+            try:
+                await current.device.connect_device()
 
-    @Slot(Device)
+                current.device.runtask = loop.create_task(current.device.run())
+
+                self.update_device(current.device)
+                self.empty_device.setVisible(False)
+                self.content_frame.setVisible(True)
+            except Exception as ex:
+                self.remove_device(current.device)
+                self.empty_device_label.setText('Could not connect to device.')
+
     def remove_device(self, device: Device):
+        self.ble_scanner.devices.pop(device.client.address)
+
         if device.list_widget:
             self.device_list.takeItem(self.device_list.row(device.list_widget))
 
@@ -255,6 +271,15 @@ class MainWidget(QWidget):
             self.ble_device.send_cmd("alarmGET")
 
     @asyncSlot()
+    async def clear_all_alarms(self):
+        if self.ble_device:
+            command = 'alarmSET:'
+            for i in range(12):
+                command += "0,0,0,0,"
+
+            self.ble_device.send_cmd(command[:-1])
+
+    @asyncSlot()
     async def refresh_files(self):
         if self.ble_device and not self.ble_device.folders_pending:
             self.ble_device.folders_pending = True
@@ -271,7 +296,6 @@ class MainWidget(QWidget):
                 durationMinutes = duration.hour() * 60 + duration.minute()
                 command += f"{1 if durationMinutes > 0 else 0},{time.hour()},{time.minute()},{durationMinutes},"
 
-            print(command)
             self.ble_device.send_cmd(command[:-1])
 
     #
@@ -286,30 +310,14 @@ class MainWidget(QWidget):
         else:
             self.scan_button.setText("Scanning devices...")
 
-    def update_disconnect_all_button(self, value: bool):
-        self.disconnect_all_button.setEnabled(not value)
-
-        if not value:
-            self.disconnect_all_button.setText("Disconnect all devices")
-        else:
-            self.disconnect_all_button.setText("Disconnecting devices")
-
-    def update_disconnect_button(self, value: bool):
-        self.disconnect_button.setEnabled(not value)
-
-        if not value:
-            self.disconnect_button.setText("Disconnect")
-        else:
-            self.disconnect_button.setText("Disconnecting")
-
     def create_empty_device(self):
         self.empty_device = QFrame()
         layout = QVBoxLayout()
 
-        label = QLabel(
+        self.empty_device_label = QLabel(
             "Please select a device from the device list\nIf the device is not found, please wait a few seconds before scanning again")
-        label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(label)
+        self.empty_device_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.empty_device_label)
 
         self.empty_device.setLayout(layout)
 
@@ -329,14 +337,6 @@ class MainWidget(QWidget):
             lambda: asyncio.run_coroutine_threadsafe(self.ble_scanner.scan_ble_devices(), asyncio.get_event_loop()))
 
         layout.addWidget(self.scan_button)
-
-        self.disconnect_all_button = QPushButton("")
-        self.disconnect_all_button.clicked.connect(
-            lambda: asyncio.run_coroutine_threadsafe(self.ble_scanner.disconnect_ble_devices(),
-                                                     asyncio.get_event_loop()))
-        self.update_disconnect_all_button(False)
-
-        layout.addWidget(self.disconnect_all_button)
 
         self.device_list_frame.setLayout(layout)
 
@@ -483,14 +483,8 @@ class MainWidget(QWidget):
         settings()
 
         def actions():
-            actions_box = QGroupBox("Actions")
+            actions_box = QGroupBox("Misc")
             layout_box = QVBoxLayout()
-
-            self.disconnect_button = QPushButton("Disconnect")
-            self.disconnect_button.clicked.connect(
-                lambda: asyncio.run_coroutine_threadsafe(self.ble_device.disconnect_device(), asyncio.get_event_loop()))
-            layout_box.addWidget(self.disconnect_button)
-            # layout_box.addWidget(QPushButton("Download logs"))
 
             layout_box.addStretch()
 
@@ -563,6 +557,10 @@ class MainWidget(QWidget):
             refresh_button.clicked.connect(self.refresh_alarms)
             layout_box.addWidget(refresh_button)
 
+            clear_all_button = QPushButton("Clear All")
+            clear_all_button.clicked.connect(self.clear_all_alarms)
+            layout_box.addWidget(clear_all_button)
+
             actions_box.setLayout(layout_box)
             layout.addWidget(actions_box, 1, 0, 2, 1)
 
@@ -618,9 +616,15 @@ class MainWidget(QWidget):
 
                 if it.data() == 2:
                     delete_action = menu.addAction("&Delete")
+                    download_action = menu.addAction("&Download")
+
                     action = menu.exec_(tree_view.viewport().mapToGlobal(pos))
+
                     if action == delete_action:
                         self.ble_device.delete_folder(it.text())
+                    elif action == download_action:
+                        target_path = QFileDialog.getSaveFileURL(None, 'Select destination folder', '', '')
+                        print(target_path)
                 elif it.data() == 3:
                     download_action = menu.addAction("&Download")
                     action = menu.exec_(tree_view.viewport().mapToGlobal(pos))

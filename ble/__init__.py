@@ -2,6 +2,7 @@ import asyncio
 import json
 import os
 import sys
+from asyncio import Task
 from datetime import datetime
 
 from PySide2.QtCore import QObject, Signal
@@ -31,6 +32,8 @@ class Scanner(QObject):
 class Device(QObject):
     name: str
     client: BleakClient
+
+    runtask: Task = None
 
     updated = Signal(Device)
     queued_commands = []
@@ -79,7 +82,6 @@ class Device(QObject):
         self.name = ble.name
         self.read_buffer = ''
         self.running = False
-        self.connected = False
 
     #
     #
@@ -129,10 +131,6 @@ class Device(QObject):
         try:
             if command == "ping":
                 self.send_cmd("pong")
-
-                if not self.connected:
-                    self.scanner.device_connected.emit(self)
-                    self.connected = True
             elif command == "time":
                 self.dtime = datetime.strptime(split[1], '%H,%M,%S,%d,%m,%y')
                 self.dtime_changed = True
@@ -291,7 +289,6 @@ class Device(QObject):
 
         if self.ble.address in self.scanner.devices:
             self.scanner.device_disconnected.emit(self)
-            del self.scanner.devices[self.ble.address]
 
     async def _sleep(self, _time: float):
         await asyncio.sleep(_time)
@@ -314,7 +311,7 @@ class Device(QObject):
         await self._sleep(tick_duration)
         await self._send_cmd("getsettings")
         await self._sleep(tick_duration)
-        self.send_cmd("alarmGET")
+        await self._send_cmd("alarmGET")
         await self._sleep(tick_duration)
         await self._send_cmd("firmware")
         await self._sleep(tick_duration)
@@ -348,6 +345,7 @@ class Device(QObject):
 
         await self.client.connect()
         await self.client.start_notify(UART_CHAR_UUID, self.handle_rx)
+        await self._send_cmd('pong')
 
     async def disconnect_device(self):
         if not self.running:
@@ -361,13 +359,11 @@ class Device(QObject):
 
         if self.ble.address in self.scanner.devices:
             self.scanner.device_disconnected.emit(self)
-            del self.scanner.devices[self.ble.address]
 
 
 class Scanner(QObject):
     devices = {}
 
-    scanner: BleakScanner = None
     scanning = False
 
     scan_started = Signal()
@@ -376,38 +372,12 @@ class Scanner(QObject):
     disconnect_started = Signal()
     disconnect_finished = Signal()
 
-    device_connected = Signal(Device)
+    device_found = Signal(Device)
     device_disconnecting = Signal(Device)
     device_disconnected = Signal(Device)
 
     def __init__(self):
         QObject.__init__(self)
-
-    async def device_found_callback(self, device: BLEDevice, adv: AdvertisementData):
-        if device.address in self.devices:
-            if device.name:
-                ble_device = self.devices[device.address]
-                ble_device.name = device.name
-                ble_device.updated.emit(ble_device)
-
-            return
-
-        if UART_SERVICE_UUID.lower() not in adv.service_uuids:
-            return
-
-        print("New device " + device.name + " - " + device.address)
-
-        loop = asyncio.get_event_loop()
-
-        new_device = Device(self, device)
-        self.devices[device.address] = new_device
-
-        try:
-            await new_device.connect_device()
-            loop.create_task(new_device.run())
-        except Exception:
-            if device.address in self.devices:
-                self.devices.pop(device.address)
 
     async def scan_ble_devices(self):
         try:
@@ -418,16 +388,27 @@ class Scanner(QObject):
             self.scanning = True
             self.scan_started.emit()
 
-            self.scanner = BleakScanner(detection_callback=self.device_found_callback)
-            await self.scanner.start()
+            devices = {}
 
-            print("Waiting...")
-            await asyncio.sleep(10)
+            async def on_detect(_device: BLEDevice, adv: AdvertisementData):
+                if UART_SERVICE_UUID.lower() not in adv.service_uuids:
+                    return
 
-            print("Stopping scanner")
-            await self.stop_ble_scan()
+                devices[_device.address] = _device
 
-            print("Finished scanning")
+            async with BleakScanner(detection_callback=on_detect):
+                await asyncio.sleep(5.0)
+
+            print(self.devices.keys())
+            for address, ble in devices.items():
+                device = Device(self, ble)
+                if address in self.devices:
+                    continue
+
+                self.devices[address] = device
+                self.device_found.emit(device)
+
+            print(f"Finished scanning")
 
             self.scanning = False
             self.scan_finished.emit()
@@ -438,23 +419,6 @@ class Scanner(QObject):
     #
     #
 
-    async def stop_ble_scan(self):
-        if self.scanner:
-            await self.scanner.stop()
-            self.scanner = None
-
     #
     #
     #
-
-    async def disconnect_ble_devices(self):
-        self.disconnect_started.emit()
-        await self.disconnect_devices()
-        self.disconnect_finished.emit()
-
-    async def disconnect_devices(self):
-        l = list(self.devices.values())
-
-        for i in range(len(self.devices)):
-            device = l[0]
-            await device.disconnect_device()
