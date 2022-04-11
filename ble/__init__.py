@@ -159,9 +159,12 @@ class Device(QObject):
                 self.imu_gyro = (float(split2[10]), float(split2[11]), float(split2[12]))
             elif command == "alarm":
                 split2 = split[1].split(",")
-                args = split2[1:] # ignore 'all'
+                args = split2[1:]  # ignore 'all'
                 for i in range(12):
-                    self.alarms[i] = Alarm(int(args[i*4 + 1]), int(args[i*4 + 2]), int(args[i*4 + 3]), args[i*4 + 0] == '1')
+                    self.alarms[i] = Alarm(int(args[i * 4 + 1]), int(args[i * 4 + 2]), int(args[i * 4 + 3]),
+                                           args[i * 4 + 0] == '1')
+
+                print(self.alarms)
 
                 self.alarms_changed = True
             elif command == "alarmSET":
@@ -306,15 +309,17 @@ class Device(QObject):
 
         self.folders_disabled = True
 
-        await self._sleep(tick_duration)
+        await self._sleep(tick_duration * 2)
         await self._send_cmd("info")
-        await self._sleep(tick_duration)
+        await self._sleep(tick_duration * 2)
         await self._send_cmd("getsettings")
-        await self._sleep(tick_duration)
+        await self._sleep(tick_duration * 2)
         await self._send_cmd("alarmGET")
-        await self._sleep(tick_duration)
+        await self._sleep(tick_duration * 2)
         await self._send_cmd("firmware")
-        await self._sleep(tick_duration)
+        await self._sleep(tick_duration * 2)
+        await self._send_cmd("alarmGET")
+        await self._sleep(tick_duration * 2)
 
         self.folders_disabled = False
 
@@ -407,8 +412,8 @@ class Scanner(QObject):
 
                 self.devices[address] = device
                 self.device_found.emit(device)
-
-            print(f"Finished scanning")
+                
+            print("Finished scanning")
 
             self.scanning = False
             self.scan_finished.emit()

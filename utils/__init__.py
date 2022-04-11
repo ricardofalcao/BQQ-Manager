@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from typing import List
 
 
 @dataclass
@@ -15,7 +16,7 @@ class LogFile:
 @dataclass
 class LogFolder:
     name: str
-    children: list[LogFile]
+    children: List[LogFile]
 
 def human_readable_size(size, decimal_places=2):
     for unit in ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB']:
