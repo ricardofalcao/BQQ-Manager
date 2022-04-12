@@ -79,7 +79,7 @@ class Device(QObject):
 
         self.scanner = scanner
         self.ble = ble
-        self.name = ble.name
+        self.name = ble.name if len(ble.name) > 0 else ble.address
         self.read_buffer = ''
         self.running = False
 
@@ -397,6 +397,12 @@ class Scanner(QObject):
 
             async def on_detect(_device: BLEDevice, adv: AdvertisementData):
                 if UART_SERVICE_UUID.lower() not in adv.service_uuids:
+                    return
+
+                if _device.address in devices:
+                    if len(_device.name) > 0:
+                        devices[_device.address] = _device
+
                     return
 
                 devices[_device.address] = _device

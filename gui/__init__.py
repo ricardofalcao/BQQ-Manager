@@ -45,6 +45,7 @@ class MainWidget(QWidget):
     imu_gyro_y: QLabel
     imu_gyro_z: QLabel
 
+    device_label: QLabel
     firmware_value: QLabel
 
     alarms_time: List[QTimeEdit] = [None] * 12
@@ -112,6 +113,7 @@ class MainWidget(QWidget):
 
         self.set_battery(device.battery)
         self.set_device_firmware(device.firmware)
+        self.set_device_label(device.name)
 
         if device.dtime_changed:
             device.dtime_changed = False
@@ -204,6 +206,9 @@ class MainWidget(QWidget):
 
     def set_device_firmware(self, firmware: str):
         self.firmware_value.setText(firmware)
+
+    def set_device_label(self, label: str):
+        self.device_label.setText(label)
 
     def set_settings(self, settings):
         # if not self.id_edit.hasFocus():
@@ -489,6 +494,11 @@ class MainWidget(QWidget):
             layout_box = QVBoxLayout()
 
             layout_box.addStretch()
+
+            self.device_label = QLabel()
+            self.device_label.setAlignment(Qt.AlignRight)
+            self.set_device_label("unknown")
+            layout_box.addWidget(self.device_label)
 
             self.firmware_value = QLabel()
             self.firmware_value.setAlignment(Qt.AlignRight)
