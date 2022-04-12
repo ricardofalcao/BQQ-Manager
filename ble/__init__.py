@@ -56,13 +56,13 @@ class Device(QObject):
     imu_gyro = (0, 0, 0)
 
     alarms = [Alarm()] * 12
-    alarms_changed: bool = False
+    alarms_changed: bool = True
 
     folders = []
 
     folders_index = 0
     folders_disabled = True
-    folders_changed = False
+    folders_changed = True
     folders_pending = False
     folders_error = False
     folders_progress = 0
@@ -73,6 +73,9 @@ class Device(QObject):
     download_size = 0
     download_written = 0
     download_file_stream = None
+    download_folder = None
+    download_folder_path = None
+    download_folder_files = []
 
     def __init__(self, scanner: Scanner, ble: BLEDevice):
         QObject.__init__(self)
@@ -91,7 +94,18 @@ class Device(QObject):
         self.folder_pending_delete = folder
         self.send_cmd(f"delfolder:{folder},*")
 
+    def download_folder(self, folderId, target_path):
+        folder = next(i for i in self.folders if i.name == folderId)
+        self.download_folder = folderId
+        self.download_folder_path = target_path
+        self.download_folder_files = [i.name for i in folder.children]
+        self.download_file(folderId, self.download_folder_files[0],
+                           os.path.join(target_path, f'{folderId}_{self.download_folder_files[0]}.csv'))
+
     def download_file(self, folder, file, target_path):
+        if file in self.download_folder_files:
+            self.download_folder_files.remove(file)
+
         print(f'getslog:/{folder}/{file}')
 
         self.download_file_stream = open(target_path, 'w')
@@ -251,6 +265,11 @@ class Device(QObject):
                 self.download_file_stream.flush()
                 self.download_file_stream.close()
 
+                if len(self.download_folder_files) > 0:
+                    self.download_file(self.download_folder, self.download_folder_files[0],
+                                       os.path.join(self.download_folder_path,
+                                                    f'{self.download_folder}_{self.download_folder_files[0]}.csv'))
+
 
         except Exception as e:
             print(e)
@@ -401,7 +420,7 @@ class Scanner(QObject):
                         devices[_device.address] = _device
 
                     return
-                
+
                 if UART_SERVICE_UUID.lower() not in adv.service_uuids:
                     return
 
@@ -418,7 +437,7 @@ class Scanner(QObject):
 
                 self.devices[address] = device
                 self.device_found.emit(device)
-                
+
             print("Finished scanning")
 
             self.scanning = False

@@ -635,8 +635,8 @@ class MainWidget(QWidget):
                     if action == delete_action:
                         self.ble_device.delete_folder(it.text())
                     elif action == download_action:
-                        target_path = QFileDialog.getSaveFileURL(None, 'Select destination folder', '', '')
-                        print(target_path)
+                        target_path = QFileDialog.getExistingDirectory(None, 'Select destination folder')
+                        self.ble_device.download_folder(it.text(), target_path)
                 elif it.data() == 3:
                     download_action = menu.addAction("&Download")
                     action = menu.exec_(tree_view.viewport().mapToGlobal(pos))
