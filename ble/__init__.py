@@ -396,13 +396,13 @@ class Scanner(QObject):
             devices = {}
 
             async def on_detect(_device: BLEDevice, adv: AdvertisementData):
-                if UART_SERVICE_UUID.lower() not in adv.service_uuids:
-                    return
-
                 if _device.address in devices:
                     if len(_device.name) > 0:
                         devices[_device.address] = _device
 
+                    return
+                
+                if UART_SERVICE_UUID.lower() not in adv.service_uuids:
                     return
 
                 devices[_device.address] = _device
