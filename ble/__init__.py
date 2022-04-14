@@ -100,7 +100,7 @@ class Device(QObject):
         self.download_folder_path = target_path
         self.download_folder_files = [i.name for i in folder.children]
         self.download_file(folderId, self.download_folder_files[0],
-                           os.path.join(target_path, f'{folderId}_{self.download_folder_files[0]}.csv'))
+                           os.path.join(target_path, f'{self.name}_{folderId}_{self.download_folder_files[0]}.csv'))
 
     def download_file(self, folder, file, target_path):
         if file in self.download_folder_files:

@@ -642,7 +642,7 @@ class MainWidget(QWidget):
                     action = menu.exec_(tree_view.viewport().mapToGlobal(pos))
                     if action == download_action:
                         folder = it.parent().text()
-                        target_path, extension = QFileDialog.getSaveFileName(None, 'Select destination file', f'{folder}_{it.text()}.csv', 'CSV files (*.csv)')
+                        target_path, extension = QFileDialog.getSaveFileName(None, 'Select destination file', f'{self.ble_device.name}_{folder}_{it.text()}.csv', 'CSV files (*.csv)')
                         if not target_path.endswith('.csv'):
                             target_path += '.csv'
 
